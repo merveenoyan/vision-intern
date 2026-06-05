@@ -1,0 +1,13 @@
+transformers>=5.10.0
+torch>=2.5.0
+torchvision
+pillow
+numpy
+scipy
+einops
+pycocotools
+requests
+accelerate
+tqdm
+datasets
+openai
