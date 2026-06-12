@@ -31,19 +31,41 @@ validate_annotations  Validate detection annotations for common issues
 compute_stats       Compute rich statistics for a COCO annotation file
 """
 
-from .detect import detect
-from .instance_segment import instance_segment
-from .segment_from_bbox import segment_from_bbox
-from .segment_from_text import segment_from_text
-from .depth import estimate_depth
-from .pose import estimate_pose
-from .grounded_detect import grounded_detect
-from .fast_segment import fast_segment
-from .ocr import ocr
-from .vlm_detect import vlm_detect
-from .document_ocr import document_ocr
-from .ocr_judge import ocr_judge
-from .bbox_utils import convert_bbox, convert_annotations, validate_annotations, compute_stats
+import importlib
+
+# Lazily map each public symbol → its submodule, so importing a light helper
+# (e.g. ``tools.hub_viz``, ``tools.bbox_viz``) does not pull torch-heavy tools.
+# ``from tools import detect`` still works — it triggers the import on access.
+_LAZY = {
+    "detect": "detect",
+    "instance_segment": "instance_segment",
+    "segment_from_bbox": "segment_from_bbox",
+    "segment_from_text": "segment_from_text",
+    "estimate_depth": "depth",
+    "estimate_pose": "pose",
+    "grounded_detect": "grounded_detect",
+    "fast_segment": "fast_segment",
+    "ocr": "ocr",
+    "vlm_detect": "vlm_detect",
+    "document_ocr": "document_ocr",
+    "ocr_judge": "ocr_judge",
+    "convert_bbox": "bbox_utils",
+    "convert_annotations": "bbox_utils",
+    "validate_annotations": "bbox_utils",
+    "compute_stats": "bbox_utils",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY:
+        mod = importlib.import_module(f".{_LAZY[name]}", __name__)
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(__all__)
+
 
 __all__ = [
     "detect",
