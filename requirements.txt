@@ -11,3 +11,7 @@ accelerate
 tqdm
 datasets
 openai
+timm
+torchmetrics
+albumentations
+trackio

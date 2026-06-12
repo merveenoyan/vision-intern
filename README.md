@@ -94,17 +94,38 @@ judge_labels(
 
 ### 3. Train RF-DETR
 
-Fine-tune a detection model on the curated dataset.
+Fine-tune a detection model on the curated dataset. This is a generalized
+version of the [HF object-detection tutorial](https://huggingface.co/docs/transformers/tasks/object_detection):
+lazy preprocessing, optional [Albumentations](https://albumentations.ai/)
+augmentation, and COCO-style **mAP / mAR** evaluation via `torchmetrics`.
 
 ```python
 from workflows import train
 
 train(
     source="merve/docvqa-judged",  # or a local COCO directory
+    model_id="Roboflow/rf-detr-base",
     epochs=10,
-    batch_size=4,
+    batch_size=8,
+    augment=True,          # Albumentations (no-op if not installed)
+    val_split="test",      # held-out split for mAP/mAR; None to skip eval
+    push_to_hub=True,
+    hub_model_id="merve/rfdetr-docvqa",
+    report_to="trackio",   # live metric tracking
 )
 ```
+
+Supported input formats (auto-detected):
+
+- **HF dataset with an `objects` column** — the standard HF detection layout.
+- **HF dataset with a `detections` column** — produced by `label_dataset` /
+  `judge_labels` (Pascal-VOC boxes, converted automatically).
+- **Local COCO directory** — `train/images/` + `train/labels.json`
+  (and optional `val/`).
+
+Any `AutoModelForObjectDetection` checkpoint works (RF-DETR, DETR, etc.); the
+default is `Roboflow/rf-detr-base`. RF-DETR requires `transformers>=5.10` and
+`timm`.
 
 ## Inference backends
 
@@ -204,9 +225,11 @@ python -m workflows.vlm_judge \
     --api-key sk-local-judge --model Qwen3-VL-4B-Instruct-Q8_0.gguf \
     --threshold 0.5
 
-# Train
+# Train (mAP/mAR eval on the test split, push to the Hub)
 python -m workflows.train_rfdetr \
-    --source merve/docvqa-judged --epochs 10
+    --source merve/docvqa-judged --train-split test --val-split none \
+    --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 \
+    --output-dir checkpoints/rfdetr-docvqa
 ```
 
 ## Example: full pipeline with role-separated models

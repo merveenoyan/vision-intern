@@ -150,7 +150,11 @@ def _label_hub(
     ds = ds.add_column("detections", all_detections)
 
     if push_to_hub:
-        ds.push_to_hub(output_id, token=hf_token)
+        from tools.hub_viz import push_dataset_with_viz
+        push_dataset_with_viz(
+            ds, output_id, token=hf_token, image_column=image_column,
+            detections_column="detections",
+        )
         print(f"Labeled {len(ds)} rows → https://huggingface.co/datasets/{output_id}")
     else:
         ds.save_to_disk(output_id)

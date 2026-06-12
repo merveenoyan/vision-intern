@@ -3,8 +3,12 @@
 Model roles (see README "Recommended architecture"):
   - Labeller (~7-8B): Qwen3-VL-8B via HF Inference Providers (remote).
   - Judge (~4B):      Qwen3-VL-4B via local llama-server on :8084.
-  - Orchestrator (~12B, Gemma-4) drives/babysits this run and never
+  - Orchestrator (~27B, Qwen3.6) drives/babysits this run and never
     labels or judges itself.
+
+Note: judging runs at zero confidence (threshold=0.0) — the single-judge
+score is unreliable, so we keep every detection and only record verdicts
+for a future multi-judge ensemble.
 """
 
 import os
@@ -63,7 +67,7 @@ judge_labels(
     source=LABELED_ID,
     output=JUDGED_ID,
     model_id=JUDGE_MODEL,
-    threshold=0.5,
+    threshold=0.0,
     backend="openai",
     base_url=JUDGE_BASE_URL,
     api_key=JUDGE_API_KEY,

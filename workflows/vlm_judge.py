@@ -123,6 +123,110 @@ _NO_VERDICT = {"verdict": "incorrect", "score": 0.0, "reason": "no verdict"}
 
 
 # ------------------------------------------------------------------
+# Reusable scoring + ensemble  (shared by in-process multi-judge and
+# the per-judge HF Jobs that write verdicts to a bucket)
+# ------------------------------------------------------------------
+
+def score_detections(
+    img: Image.Image,
+    detections: list[dict],
+    model_id: str,
+    *,
+    backend: str,
+    base_url: str | None,
+    api_key: str | None,
+) -> list[dict]:
+    """Run a single judge over one image's detections.
+
+    Returns one ``{detection_idx, verdict, score, reason}`` per detection.
+    """
+    if not detections:
+        return []
+    w, h = img.size
+    prompt = _build_judge_prompt(detections, w, h)
+    try:
+        response = run_vlm(
+            img, prompt, model_id,
+            backend=backend, base_url=base_url, api_key=api_key,
+            max_tokens=1024,
+        )
+    except Exception as e:  # noqa: BLE001 — a dead judge must not abort the run
+        print(f"\n  [warn] judge {model_id} failed: {e}")
+        response = "[]"
+    verdicts = _parse_verdicts(response)
+    return [
+        {"detection_idx": i, **verdicts.get(i, _NO_VERDICT)}
+        for i in range(len(detections))
+    ]
+
+
+def ensemble_row(
+    per_judge_row: dict[str, list[dict]],
+    n_dets: int,
+    min_agree: int,
+) -> list[dict]:
+    """Combine several judges' per-detection verdicts for one image.
+
+    *per_judge_row* maps a judge label → its list of
+    ``{detection_idx, verdict, score, reason}`` dicts.  Returns one ensemble
+    entry per detection with per-judge breakdown, vote count, mean score and
+    an ``ensemble_keep`` flag (``n_correct >= min_agree``).
+    """
+    out: list[dict] = []
+    for i in range(n_dets):
+        per_judge: dict[str, dict] = {}
+        scores: list[float] = []
+        n_correct = 0
+        for label, verdicts in per_judge_row.items():
+            vmap = {v["detection_idx"]: v for v in verdicts}
+            v = vmap.get(i, _NO_VERDICT)
+            per_judge[label] = {
+                "verdict": v.get("verdict", "incorrect"),
+                "score": float(v.get("score", 0.0)),
+                "reason": v.get("reason", ""),
+            }
+            scores.append(per_judge[label]["score"])
+            if per_judge[label]["verdict"] == "correct":
+                n_correct += 1
+        mean = round(sum(scores) / len(scores), 4) if scores else 0.0
+        out.append({
+            "detection_idx": i,
+            "per_judge": per_judge,
+            "n_correct": n_correct,
+            "mean_score": mean,
+            "ensemble_keep": n_correct >= min_agree,
+        })
+    return out
+
+
+def _normalize_judges(
+    judges: list | None,
+    model_id: str,
+    backend: str,
+    base_url: str | None,
+    api_key: str | None,
+) -> list[dict]:
+    """Build a list of judge specs from either an explicit *judges* list
+    (dicts or bare model-id strings) or the single-judge ``model_id`` args."""
+    if not judges:
+        return [{"model_id": model_id, "backend": backend,
+                 "base_url": base_url, "api_key": api_key}]
+    specs = []
+    for j in judges:
+        if isinstance(j, str):
+            specs.append({"model_id": j, "backend": backend,
+                          "base_url": base_url, "api_key": api_key})
+        else:
+            specs.append({
+                "model_id": j["model_id"],
+                "backend": j.get("backend", backend),
+                "base_url": j.get("base_url", base_url),
+                "api_key": j.get("api_key", api_key),
+            })
+    return specs
+
+
+# ------------------------------------------------------------------
 # Local mode  (image_dir + COCO JSON → filtered COCO JSON)
 # ------------------------------------------------------------------
 
@@ -195,11 +299,9 @@ def _judge_local(
 def _judge_hub(
     dataset_id: str,
     output_id: str,
-    model_id: str,
+    judge_specs: list[dict],
     threshold: float,
-    backend: str,
-    base_url: str | None,
-    api_key: str | None,
+    min_agree: int,
     image_column: str,
     detections_column: str,
     split: str,
@@ -214,6 +316,10 @@ def _judge_hub(
     if max_samples:
         ds = ds.select(range(min(max_samples, len(ds))))
 
+    labels = [s["model_id"] for s in judge_specs]
+    print(f"Judging with {len(judge_specs)} judge(s): {labels} "
+          f"(min_agree={min_agree}, threshold={threshold})")
+
     filtered_dets: list[list[dict]] = []
     all_verdicts: list[list[dict]] = []
 
@@ -221,7 +327,6 @@ def _judge_hub(
         img = row[image_column]
         if not isinstance(img, Image.Image):
             img = load_image(img)
-        w, h = img.size
 
         dets = row.get(detections_column, []) or []
         if not dets:
@@ -229,43 +334,43 @@ def _judge_hub(
             all_verdicts.append([])
             continue
 
-        prompt = _build_judge_prompt(dets, w, h)
-        try:
-            response = run_vlm(
-                img, prompt, model_id,
-                backend=backend, base_url=base_url, api_key=api_key,
-                max_tokens=1024,
+        per_judge_row = {
+            spec["model_id"]: score_detections(
+                img, dets, spec["model_id"],
+                backend=spec["backend"], base_url=spec["base_url"],
+                api_key=spec["api_key"],
             )
-        except Exception as e:
-            print(f"\n  [warn] judge VLM failed, keeping all dets: {e}")
-            response = "[]"
-        verdicts = _parse_verdicts(response)
+            for spec in judge_specs
+        }
+        row_verdicts = ensemble_row(per_judge_row, len(dets), min_agree)
 
-        kept = []
-        row_verdicts = []
-        for i, det in enumerate(dets):
-            v = verdicts.get(i, _NO_VERDICT)
-            row_verdicts.append({"detection_idx": i, **v})
-            if v["score"] >= threshold:
-                kept.append(det)
-
+        kept = [
+            det for det, v in zip(dets, row_verdicts)
+            if v["ensemble_keep"] and v["mean_score"] >= threshold
+        ]
         filtered_dets.append(kept)
         all_verdicts.append(row_verdicts)
+
+    total = sum(len(row.get(detections_column, []) or []) for row in ds)
 
     if detections_column in ds.column_names:
         ds = ds.remove_columns([detections_column])
     ds = ds.add_column(detections_column, filtered_dets)
     ds = ds.add_column("judge_verdicts", all_verdicts)
 
-    total = sum(len(row.get(detections_column, []) or []) for row in ds)
     kept_total = sum(len(d) for d in filtered_dets)
 
     if push_to_hub:
-        ds.push_to_hub(output_id, token=hf_token)
-        print(f"Judge kept {kept_total} detections → https://huggingface.co/datasets/{output_id}")
+        from tools.hub_viz import push_dataset_with_viz
+        push_dataset_with_viz(
+            ds, output_id, token=hf_token, image_column=image_column,
+            detections_column=detections_column,
+        )
+        print(f"Judge kept {kept_total}/{total} detections "
+              f"→ https://huggingface.co/datasets/{output_id}")
     else:
         ds.save_to_disk(output_id)
-        print(f"Judge kept {kept_total} detections → {output_id}")
+        print(f"Judge kept {kept_total}/{total} detections → {output_id}")
 
     return ds
 
@@ -279,7 +384,9 @@ def judge_labels(
     output: str | Path,
     annotations: str | Path | None = None,
     model_id: str = DEFAULT_VLM,
-    threshold: float = 0.5,
+    judges: list | None = None,
+    threshold: float = 0.0,
+    min_agree: int = 1,
     backend: str = "transformers",
     base_url: str | None = None,
     api_key: str | None = None,
@@ -304,11 +411,19 @@ def judge_labels(
     annotations : str or Path, optional
         COCO JSON file — required in local mode, ignored in Hub mode.
     model_id : str
-        Model identifier.
+        Single-judge model identifier (used when *judges* is not given).
+    judges : list, optional
+        Multiple judges for an **ensemble** (Hub mode).  Each entry is either
+        a bare model-id string (inheriting *backend*/*base_url*/*api_key*) or a
+        dict ``{"model_id", "backend", "base_url", "api_key"}``.  Per-judge
+        verdicts plus the ensemble vote are stored in ``judge_verdicts``.
     threshold : float
-        Minimum judge score to keep an annotation (0\u20131).
+        Minimum ensemble ``mean_score`` to keep a detection (0\u20131).
+    min_agree : int
+        Minimum number of judges that must vote ``correct`` to keep a
+        detection.  ``0`` keeps everything (records verdicts only).
     backend / base_url / api_key
-        Inference backend (see :mod:`tools.vlm_client`).
+        Default inference backend for judges lacking their own spec.
     image_column / detections_column : str
         Column names (Hub mode only).
     split : str
@@ -316,7 +431,7 @@ def judge_labels(
     max_samples : int, optional
         Cap the number of images to process.
     push_to_hub : bool
-        Push the filtered dataset to the Hub.
+        Push the filtered dataset to the Hub (with a box-overlay gallery).
     hf_token : str, optional
         Hugging Face token for pushing.
     dataset_config : str, optional
@@ -327,18 +442,22 @@ def judge_labels(
     dict or datasets.Dataset
         Filtered COCO dict (local) or HF Dataset (Hub).
     """
+    judge_specs = _normalize_judges(judges, model_id, backend, base_url, api_key)
+
     if _is_local_dir(source):
         if annotations is None:
             raise ValueError(
                 "Local mode requires --annotations (COCO JSON path)."
             )
+        first = judge_specs[0]
         return _judge_local(
             Path(source), Path(annotations), Path(output),
-            model_id, threshold, backend, base_url, api_key,
+            first["model_id"], threshold, first["backend"],
+            first["base_url"], first["api_key"],
         )
     return _judge_hub(
         str(source), str(output),
-        model_id, threshold, backend, base_url, api_key,
+        judge_specs, threshold, min_agree,
         image_column, detections_column, split, max_samples,
         push_to_hub, hf_token, dataset_config=dataset_config,
     )
@@ -359,7 +478,13 @@ def _cli() -> None:
     parser.add_argument("--annotations", default=None,
                         help="COCO JSON (local mode only)")
     parser.add_argument("--model", default=DEFAULT_VLM)
-    parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--judges", default=None,
+                        help="Comma-separated judge model ids for an ensemble "
+                             "(overrides --model). All share --backend/--base-url.")
+    parser.add_argument("--threshold", type=float, default=0.0)
+    parser.add_argument("--min-agree", type=int, default=1,
+                        help="Min judges voting 'correct' to keep a detection "
+                             "(0 = keep all, record verdicts only).")
     parser.add_argument("--backend", default="transformers",
                         choices=["openai", "transformers"])
     parser.add_argument("--base-url", default=None)
@@ -374,12 +499,19 @@ def _cli() -> None:
                         help="Dataset config name (multi-config datasets)")
     args = parser.parse_args()
 
+    judge_list = (
+        [m.strip() for m in args.judges.split(",") if m.strip()]
+        if args.judges else None
+    )
+
     judge_labels(
         source=args.source,
         output=args.output,
         annotations=args.annotations,
         model_id=args.model,
+        judges=judge_list,
         threshold=args.threshold,
+        min_agree=args.min_agree,
         backend=args.backend,
         base_url=args.base_url,
         api_key=args.api_key,
