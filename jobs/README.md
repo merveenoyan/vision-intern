@@ -6,11 +6,21 @@ judges):
 
 | Stage | Script | Model | Family | Size | Flavor |
 |---|---|---|---|---|---|
-| 1 Label | `label_moondream.py` | `moondream/moondream3-preview` | moondream | 9.3B | `l4x1` |
+| 1 Label | `label_qwen.py` | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | `cpu-upgrade`¹ |
 | 2 Judge A | `judge_one.py` | `google/gemma-4-E4B-it` | Google | 8.0B | `l4x1` |
 | 2 Judge B | `judge_one.py` | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` |
 | 3 Merge | `merge_judges.py` | — (ensemble) | — | — | `cpu-upgrade` |
 | 4 Train | `train_rfdetr_job.py` | `Roboflow/rf-detr-base` | — | — | `l40sx1` |
+
+¹ Qwen3.5-9B has live HF Inference Providers, so `label_qwen.py` labels through
+the HF router (`openai` backend) on a CPU job — no GPU load. It uses the
+per-object `bbox_2d` (0-1000) prompt (`tools/vlm_detect`), giving tight boxes
+(median area ≈ 0.09 of the page).
+
+> **Alternative labeller — `label_moondream.py`** (`moondream/moondream3-preview`,
+> 9.3B, native `.detect()`, GPU `l4x1`). moondream is a detection specialist but
+> on *scanned document pages* it tends to return page-spanning boxes (median area
+> ≈ 0.98), so Qwen is the better fit for DocVQA. Kept for non-document imagery.
 
 Each script clones this repo (`REPO_REF` env, default `multimodel-jobs`) for the
 shared `tools/` + `workflows/` helpers, so **push your branch before launching**.
@@ -19,8 +29,8 @@ Intermediate verdicts pass between jobs through the bucket
 called for in `agents.md`.
 
 Datasets / artifacts (separate from the originals):
-`merve/docvqa-media-labeled-moondream` → `merve/docvqa-media-judged-ensemble` →
-`merve/rfdetr-docvqa-moondream`. Every dataset push includes an auto-generated
+`merve/docvqa-media-labeled-qwen` → `merve/docvqa-media-judged-ensemble` →
+`merve/rfdetr-docvqa-qwen`. Every dataset push includes an auto-generated
 box-overlay gallery (`viz/` + README), so boxes never need re-rendering.
 
 ## One-time setup
@@ -30,36 +40,39 @@ git push origin multimodel-jobs              # jobs clone this ref
 ```
 
 ## Smoke test (≈20 images, cheap)
+Append `--max-samples 20` to stages 1–3.
+
+## Full run
 ```bash
 BUCKET="-v hf://buckets/merve/vision-agent-runs:/data"
 REF="-e REPO_REF=multimodel-jobs"
-N="--max-samples 20"
+DIR=/data/docvqa-qwen
 
-# 1 — label
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $BUCKET $REF -d \
-  jobs/label_moondream.py -- $N
+# 1 — label (router, CPU)
+hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $REF -d \
+  jobs/label_qwen.py -- --output merve/docvqa-media-labeled-qwen
 
-# 2 — judges (after stage 1 SUCCEEDED)
+# 2 — judges (after stage 1 SUCCEEDED; run both in parallel)
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $BUCKET $REF -d \
   jobs/judge_one.py -- --model google/gemma-4-E4B-it \
-  --out /data/docvqa-moondream/verdicts_gemma.parquet $N
+  --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_gemma.parquet
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $BUCKET $REF -d \
   jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
-  --out /data/docvqa-moondream/verdicts_lfm.parquet $N
+  --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_lfm.parquet
 
 # 3 — merge (after both judges SUCCEEDED)
 hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
-  jobs/merge_judges.py -- \
-  --verdicts "google/gemma-4-E4B-it::/data/docvqa-moondream/verdicts_gemma.parquet" \
-  --verdicts "LiquidAI/LFM2.5-VL-1.6B::/data/docvqa-moondream/verdicts_lfm.parquet" \
-  --min-agree 1 $N
-```
+  jobs/merge_judges.py -- --dataset merve/docvqa-media-labeled-qwen \
+  --output merve/docvqa-media-judged-ensemble \
+  --verdicts "google/gemma-4-E4B-it::$DIR/verdicts_gemma.parquet" \
+  --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
+  --min-agree 1
 
-## Full run
-Drop `--max-samples` from stages 1–3 (defaults to the whole `test` split), then:
-```bash
+# 4 — train RF-DETR (after merge SUCCEEDED)
 hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN $REF --timeout 6h -d \
-  jobs/train_rfdetr_job.py -- --epochs 10 --batch-size 8
+  jobs/train_rfdetr_job.py -- --epochs 10 --batch-size 8 \
+  --source merve/docvqa-media-judged-ensemble \
+  --hub-model-id merve/rfdetr-docvqa-qwen
 ```
 
 ## Babysitting
@@ -68,7 +81,7 @@ hf jobs ps                      # list running jobs + ids
 hf jobs logs <job_id>           # fetch logs (add -f to follow)
 hf jobs inspect <job_id>        # status / exit code
 hf jobs cancel <job_id>         # stop
-hf buckets ls merve/vision-agent-runs/docvqa-moondream -h   # check artifacts
+hf buckets ls merve/vision-agent-runs/docvqa-qwen -h        # check artifacts
 ```
 Each stage prints `STAGE N DONE` on success — grep logs for that plus
 `Traceback|Error|OOM|Killed` to catch failures.
