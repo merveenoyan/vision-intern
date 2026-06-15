@@ -50,8 +50,12 @@ def main() -> None:
     p.add_argument("--output", default="merve/docvqa-media-judged-ensemble")
     p.add_argument("--verdicts", action="append", required=True,
                    help="Repeatable 'label::parquet_path' pair, one per judge.")
-    p.add_argument("--min-agree", type=int, default=1)
+    p.add_argument("--min-agree", type=int, default=2,
+                   help="Min judges voting 'correct' to keep a detection.")
     p.add_argument("--threshold", type=float, default=0.0)
+    p.add_argument("--max-area-frac", type=float, default=0.9,
+                   help="Drop detections whose box covers more than this "
+                        "fraction of the page (non-VLM page-spanning guard).")
     p.add_argument("--max-samples", type=int, default=None)
     args = p.parse_args()
 
@@ -78,20 +82,36 @@ def main() -> None:
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
 
+    def _area_frac(det: dict, w: int, h: int) -> float:
+        """Fraction of the page a detection's box covers (0 if unknown)."""
+        bbox = det.get("bbox", det.get("box"))
+        if not bbox or len(bbox) != 4 or w <= 0 or h <= 0:
+            return 0.0
+        x1, y1, x2, y2 = bbox
+        return abs((x2 - x1) * (y2 - y1)) / float(w * h)
+
     filtered_dets: list[list[dict]] = []
     all_verdicts: list[list[dict]] = []
+    dropped_geom = 0
     for i, row in enumerate(ds):
         dets = row.get(args.detections_column) or []
         if not dets:
             filtered_dets.append([])
             all_verdicts.append([])
             continue
+        w, h = row["image"].size
         per_judge_row = {lbl: judge_rows[lbl].get(i, []) for lbl in labels}
         verdicts = ensemble_row(per_judge_row, len(dets), args.min_agree)
-        kept = [
-            d for d, v in zip(dets, verdicts)
-            if v["ensemble_keep"] and v["mean_score"] >= args.threshold
-        ]
+        kept = []
+        for d, v in zip(dets, verdicts):
+            # Record the geometric check on the verdict for transparency.
+            v["area_frac"] = round(_area_frac(d, w, h), 4)
+            v["geom_keep"] = v["area_frac"] <= args.max_area_frac
+            if v["ensemble_keep"] and v["mean_score"] >= args.threshold:
+                if v["geom_keep"]:
+                    kept.append(d)
+                else:
+                    dropped_geom += 1
         filtered_dets.append(kept)
         all_verdicts.append(verdicts)
 
@@ -103,8 +123,9 @@ def main() -> None:
     ds = ds.add_column(args.detections_column, filtered_dets)
     ds = ds.add_column("judge_verdicts", all_verdicts)
 
-    print(f"Ensemble ({labels}, min_agree={args.min_agree}) kept "
-          f"{kept_total}/{total} detections")
+    print(f"Ensemble ({labels}, min_agree={args.min_agree}, "
+          f"max_area_frac={args.max_area_frac}) kept {kept_total}/{total} "
+          f"detections ({dropped_geom} dropped by page-spanning guard)")
     push_dataset_with_viz(ds, args.output, token=token, image_column="image")
     print("STAGE 3 DONE")
 

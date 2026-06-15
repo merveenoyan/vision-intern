@@ -42,29 +42,28 @@ def _is_local_dir(source: str | Path) -> bool:
 # Prompt / parsing (shared by both modes)
 # ------------------------------------------------------------------
 
-def _build_judge_prompt(
-    detections: list[dict],
-    width: int,
-    height: int,
-) -> str:
-    lines = []
-    for i, det in enumerate(detections):
-        bbox = det.get("bbox", det.get("box", []))
-        label = det.get("label", "unknown")
-        lines.append(f'  id={i}: label="{label}", bbox={bbox}')
+def _build_judge_prompt_overlay(detections: list[dict]) -> str:
+    """Judge prompt for the *overlay* image: each box is drawn and numbered on
+    the image itself, so we only list the proposed label per index — no raw
+    coordinates for the model to mentally project."""
+    lines = [
+        f'  #{i}: proposed label "{det.get("label", "unknown")}"'
+        for i, det in enumerate(detections)
+    ]
     ann_block = "\n".join(lines) if lines else "  (none)"
 
     return (
         "You are a quality-control judge for object-detection annotations.\n"
-        f"Image size: {width}\u00d7{height} pixels.\n\n"
-        f"Current detections:\n{ann_block}\n\n"
-        "For EACH detection evaluate:\n"
-        "  1. Is the labelled object actually present at that location?\n"
-        "  2. Is the bounding box reasonably tight around the object?\n"
-        "Return ONLY a JSON array \u2014 one entry per detection:\n"
-        '[{"id": <idx>, "verdict": "correct"|"incorrect"|"imprecise", '
+        "Each proposed detection is drawn on the image as a numbered coloured "
+        "box (#0, #1, …) with its label.\n\n"
+        f"Proposed detections:\n{ann_block}\n\n"
+        "Look at what is actually inside each numbered box and evaluate:\n"
+        "  1. Is the labelled object actually present inside that box?\n"
+        "  2. Is the box reasonably tight around the object?\n"
+        "Return ONLY a JSON array — one entry per box:\n"
+        '[{"id": <box number>, "verdict": "correct"|"incorrect"|"imprecise", '
         '"score": <0.0-1.0>, "reason": "<short explanation>"}]\n'
-        "If there are no detections return: []"
+        "If there are no boxes return: []"
     )
 
 
@@ -135,18 +134,30 @@ def score_detections(
     backend: str,
     base_url: str | None,
     api_key: str | None,
+    overlay_img: Image.Image | None = None,
 ) -> list[dict]:
     """Run a single judge over one image's detections.
+
+    The judge sees the **numbered box-overlay** image — either *overlay_img*
+    (the ``detections_overlay`` column produced at label time) or, if not
+    supplied, one rendered on the fly — and is asked to evaluate each box by
+    looking at it, rather than being handed raw coordinates over the bare
+    image (which forced the model to project pixel coords it reasons about
+    poorly).
 
     Returns one ``{detection_idx, verdict, score, reason}`` per detection.
     """
     if not detections:
         return []
-    w, h = img.size
-    prompt = _build_judge_prompt(detections, w, h)
+    if overlay_img is None:
+        from tools.bbox_viz import draw_detections
+        overlay_img = draw_detections(img, detections, show_index=True)
+    elif not isinstance(overlay_img, Image.Image):
+        overlay_img = load_image(overlay_img)
+    prompt = _build_judge_prompt_overlay(detections)
     try:
         response = run_vlm(
-            img, prompt, model_id,
+            overlay_img, prompt, model_id,
             backend=backend, base_url=base_url, api_key=api_key,
             max_tokens=1024,
         )
@@ -334,11 +345,12 @@ def _judge_hub(
             all_verdicts.append([])
             continue
 
+        overlay = row.get("detections_overlay")
         per_judge_row = {
             spec["model_id"]: score_detections(
                 img, dets, spec["model_id"],
                 backend=spec["backend"], base_url=spec["base_url"],
-                api_key=spec["api_key"],
+                api_key=spec["api_key"], overlay_img=overlay,
             )
             for spec in judge_specs
         }

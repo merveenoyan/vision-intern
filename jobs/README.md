@@ -33,6 +33,19 @@ Datasets / artifacts (separate from the originals):
 `merve/rfdetr-docvqa-qwen`. Every dataset push includes an auto-generated
 box-overlay gallery (`viz/` + README), so boxes never need re-rendering.
 
+### How judging works (and its limits)
+The labeller stores a `detections_overlay` column — each proposed box drawn and
+**numbered** (`#0`, `#1`, …) on the image. Judges score that overlay directly,
+evaluating each numbered box by *looking at it*, instead of being handed raw
+`bbox` coordinates over the bare image (VLMs reason about pixel coordinates
+poorly, the main hallucination source). The per-judge `score` is still an
+**uncalibrated VLM confidence**, not a metric — so the keep decision is gated
+by two cheap, non-vibe checks: `--min-agree 2` (both judges must vote
+`correct`) and a `--max-area-frac 0.9` page-spanning guard (a pure geometric
+filter, no VLM). Both checks are recorded per detection in `judge_verdicts`
+(`area_frac`, `geom_keep`). Judges fall back to rendering the overlay on the fly
+when the column is absent (e.g. datasets labelled before this change).
+
 ## One-time setup
 ```bash
 hf buckets create vision-agent-runs          # run bucket (idempotent)
@@ -66,7 +79,7 @@ hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   --output merve/docvqa-media-judged-ensemble \
   --verdicts "google/gemma-4-E4B-it::$DIR/verdicts_gemma.parquet" \
   --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
-  --min-agree 1
+  --min-agree 2 --max-area-frac 0.9
 
 # 4 — train RF-DETR (after merge SUCCEEDED)
 hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN $REF --timeout 6h -d \

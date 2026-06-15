@@ -44,11 +44,16 @@ def draw_detections(
     image: Image.Image,
     detections: list[dict],
     verdicts: list[dict] | None = None,
+    show_index: bool = False,
 ) -> Image.Image:
     """Return a copy of *image* with each detection's box + label drawn.
 
     When *verdicts* is given, the judge score (``mean_score`` for the
     ensemble schema, else ``score``) is appended to the label.
+
+    When *show_index* is ``True`` each box label is prefixed with its
+    detection index (``#0``, ``#1`` …) so a VLM judge looking at the overlay
+    can reference each box by number instead of raw coordinates.
     """
     img = image.convert("RGB").copy()
     draw = ImageDraw.Draw(img)
@@ -70,12 +75,13 @@ def draw_detections(
                 outline=color,
             )
 
+        base = f"#{i} {label}" if show_index else str(label)
         v = score_by_idx.get(i)
         if v is None:
-            text = str(label)
+            text = base
         else:
             score = v.get("mean_score", v.get("score", 0.0))
-            text = f"{label} {score:.2f}"
+            text = f"{base} {score:.2f}"
         tb = draw.textbbox((0, 0), text, font=font)
         tw, th = tb[2] - tb[0], tb[3] - tb[1]
         draw.rectangle([x1, y1 - th - 6, x1 + tw + 8, y1], fill=color)

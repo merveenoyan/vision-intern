@@ -58,6 +58,9 @@ def main() -> None:
     p.add_argument("--dataset", default="merve/docvqa-media-labeled-moondream")
     p.add_argument("--split", default="test")
     p.add_argument("--detections-column", default="detections")
+    p.add_argument("--overlay-column", default="detections_overlay",
+                   help="Image column with numbered box overlays (rendered on "
+                        "the fly when the column is absent).")
     p.add_argument("--out", required=True, help="Output verdicts parquet path")
     p.add_argument("--max-samples", type=int, default=None)
     args = p.parse_args()
@@ -82,9 +85,11 @@ def main() -> None:
         img = row["image"]
         if not isinstance(img, Image.Image):
             img = load_image(img)
+        overlay = row.get(args.overlay_column)
         verdicts = score_detections(
             img, dets, args.model,
             backend="transformers", base_url=None, api_key=None,
+            overlay_img=overlay,
         )
         rows_out.append(verdicts)
         if i % 25 == 0:

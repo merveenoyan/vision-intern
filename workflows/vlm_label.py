@@ -128,7 +128,11 @@ def _label_hub(
     if max_samples:
         ds = ds.select(range(min(max_samples, len(ds))))
 
+    from tools.bbox_viz import draw_detections
+
     all_detections: list[list[dict]] = []
+    all_overlays: list[Image.Image] = []
+    class_set = set(classes)
 
     for row in tqdm(ds, desc="Labeling", total=len(ds)):
         img = row[image_column]
@@ -143,11 +147,17 @@ def _label_hub(
         except Exception as e:
             print(f"\n  [warn] vlm_detect failed, skipping: {e}")
             dets = []
-        class_set = set(classes)
         dets = [d for d in dets if d.get("label", "").lower() in class_set]
         all_detections.append(dets)
+        # Persist a numbered box-overlay render so the judge stage can score by
+        # looking at the boxes drawn on the image instead of raw coordinates.
+        all_overlays.append(draw_detections(img, dets, show_index=True))
+
+    from datasets import Image as HFImage
 
     ds = ds.add_column("detections", all_detections)
+    ds = ds.add_column("detections_overlay", all_overlays)
+    ds = ds.cast_column("detections_overlay", HFImage())
 
     if push_to_hub:
         from tools.hub_viz import push_dataset_with_viz
