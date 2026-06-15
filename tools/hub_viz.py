@@ -74,6 +74,20 @@ def push_dataset_with_viz(
     Falls back gracefully: a failure to render/upload the gallery never blocks
     the dataset push itself.
     """
+    # Clear any stale README first: pushing over an existing repo keeps the old
+    # ``dataset_info`` features YAML, so a schema change (new struct fields) ends
+    # up with parquet that no longer matches the declared features and
+    # ``load_dataset`` fails to cast. Deleting it forces push_to_hub to write
+    # fresh, matching metadata.
+    try:
+        from huggingface_hub import HfApi as _HfApi
+        _HfApi(token=token).delete_file(
+            "README.md", repo_id, repo_type="dataset",
+            commit_message="Clear stale card before refresh",
+        )
+    except Exception:
+        pass  # no existing README (new repo) — nothing to clear
+
     ds.push_to_hub(repo_id, token=token)
     print(f"Pushed dataset → https://huggingface.co/datasets/{repo_id}")
 
