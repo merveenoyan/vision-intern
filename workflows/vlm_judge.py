@@ -107,10 +107,23 @@ def _parse_verdicts(text: str) -> dict[int, dict]:
         return {}
     out: dict[int, dict] = {}
     for item in raw:
+        if not isinstance(item, dict):
+            continue
         aid = item.get("id")
         if aid is None:
             continue
-        out[int(aid)] = {
+        # Judges sometimes echo the box label form ("#0", "box 0") rather than a
+        # bare int — pull the first integer out of whatever they returned.
+        if isinstance(aid, str):
+            m = re.search(r"\d+", aid)
+            if not m:
+                continue
+            aid = m.group()
+        try:
+            idx = int(aid)
+        except (TypeError, ValueError):
+            continue
+        out[idx] = {
             "verdict": item.get("verdict", "incorrect"),
             "score": float(item.get("score", 0.0)),
             "reason": item.get("reason", ""),
