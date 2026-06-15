@@ -61,15 +61,18 @@ BUCKET="-v hf://buckets/merve/vision-agent-runs:/data"
 REF="-e REPO_REF=multimodel-jobs"
 DIR=/data/docvqa-qwen
 
-# 1 — label (router, CPU)
-hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $REF -d \
+# 1 — label (router, CPU). --timeout 3h: the full 1000-row push runs past the
+# default timeout and gets flagged ERROR even though the data uploaded fine.
+hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN --timeout 3h $REF -d \
   jobs/label_qwen.py -- --output merve/docvqa-media-labeled-qwen
 
 # 2 — judges (after stage 1 SUCCEEDED; run both in parallel)
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $BUCKET $REF -d \
+# NB: --timeout 3h — gemma-8B over 1000 rows on l4x1 runs past the default job
+# timeout; without it the job is killed AFTER writing verdicts and flagged ERROR.
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
   jobs/judge_one.py -- --model google/gemma-4-E4B-it \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_gemma.parquet
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $BUCKET $REF -d \
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
   jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_lfm.parquet
 
