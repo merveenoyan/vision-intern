@@ -269,8 +269,13 @@ def _load_normalized(
         return norm, None, id2label, label2id
 
     if val_size and val_size > 0:
-        split = norm.train_test_split(test_size=val_size, seed=seed)
-        return split["train"], split["test"], id2label, label2id
+        # Group by image so multiple rows of the same image (common in VQA-style
+        # sources) can't leak across train/val and inflate eval metrics.
+        from tools.dataset_utils import grouped_train_val_split
+        train_ds, val_ds = grouped_train_val_split(
+            norm, val_size=val_size, image_column="image", seed=seed,
+        )
+        return train_ds, val_ds, id2label, label2id
 
     return norm, None, id2label, label2id
 

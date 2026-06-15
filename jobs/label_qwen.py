@@ -50,6 +50,12 @@ def main() -> None:
     p.add_argument("--backend", default="openai", choices=["openai", "transformers"])
     p.add_argument("--base-url", default=None, help="Defaults to the HF router")
     p.add_argument("--max-samples", type=int, default=None)
+    p.add_argument("--dedupe", action="store_true",
+                   help="Collapse repeated images to one row before labelling "
+                        "(DocVQA has ~3.4 question rows per page).")
+    p.add_argument("--dedupe-key-columns", default="docId",
+                   help="Comma-separated column(s) identifying the same image "
+                        "for --dedupe (default: docId; '' = image-content hash).")
     args = p.parse_args()
 
     from workflows.vlm_label import label_dataset
@@ -72,6 +78,11 @@ def main() -> None:
         push_to_hub=True,
         hf_token=token,
         dataset_config=args.dataset_config,
+        dedupe=args.dedupe,
+        dedupe_key_columns=(
+            [c.strip() for c in args.dedupe_key_columns.split(",") if c.strip()]
+            if args.dedupe_key_columns else None
+        ),
     )
     print("STAGE 1 (qwen) DONE")
 

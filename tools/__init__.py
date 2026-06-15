@@ -29,6 +29,9 @@ ocr_judge           Pairwise OCR quality evaluation (VLM-as-judge + ELO)
 convert_bbox        Convert bboxes between 6 formats (coco/xyxy/yolo/voc/tfod/ls)
 validate_annotations  Validate detection annotations for common issues
 compute_stats       Compute rich statistics for a COCO annotation file
+dedupe_by_image     Collapse a dataset to one row per unique image
+grouped_train_val_split  Train/val split with no image leaking across splits
+image_key           Stable content hash of an image (for the two helpers above)
 """
 
 import importlib
@@ -53,6 +56,9 @@ _LAZY = {
     "convert_annotations": "bbox_utils",
     "validate_annotations": "bbox_utils",
     "compute_stats": "bbox_utils",
+    "dedupe_by_image": "dataset_utils",
+    "grouped_train_val_split": "dataset_utils",
+    "image_key": "dataset_utils",
 }
 
 
@@ -84,4 +90,7 @@ __all__ = [
     "convert_annotations",
     "validate_annotations",
     "compute_stats",
+    "dedupe_by_image",
+    "grouped_train_val_split",
+    "image_key",
 ]

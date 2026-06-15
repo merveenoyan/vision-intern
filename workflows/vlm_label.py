@@ -115,6 +115,8 @@ def _label_hub(
     push_to_hub: bool,
     hf_token: str | None,
     dataset_config: str | None = None,
+    dedupe: bool = False,
+    dedupe_key_columns: list[str] | None = None,
 ) -> Any:
     from datasets import load_dataset
 
@@ -124,6 +126,17 @@ def _label_hub(
         raise ValueError(
             f"Column '{image_column}' not found. Available: {ds.column_names}"
         )
+
+    # Collapse repeated images (e.g. VQA datasets with many rows per page) so we
+    # don't label the same image several times.
+    if dedupe:
+        from tools.dataset_utils import dedupe_by_image
+        before = len(ds)
+        ds = dedupe_by_image(
+            ds, image_column=image_column, key_columns=dedupe_key_columns,
+        )
+        print(f"Deduped {before} → {len(ds)} unique images "
+              f"(key={dedupe_key_columns or 'image-hash'})")
 
     if max_samples:
         ds = ds.select(range(min(max_samples, len(ds))))
@@ -192,6 +205,8 @@ def label_dataset(
     push_to_hub: bool = False,
     hf_token: str | None = None,
     dataset_config: str | None = None,
+    dedupe: bool = False,
+    dedupe_key_columns: list[str] | None = None,
 ) -> dict | Any:
     """Auto-label images and write detection annotations.
 
@@ -221,6 +236,12 @@ def label_dataset(
     dataset_config : str, optional
         Dataset configuration name (Hub mode only).  Required for
         multi-config datasets like ``lmms-lab/DocVQA``.
+    dedupe : bool
+        Collapse repeated images to one row before labelling (Hub mode only).
+        Useful for VQA-style datasets with many rows per image.
+    dedupe_key_columns : list[str], optional
+        Column(s) identifying the same image for *dedupe* (e.g. ``["docId"]``).
+        When omitted, dedupes by image content hash.
 
     Returns
     -------
@@ -240,6 +261,7 @@ def label_dataset(
         model_id, backend, base_url, api_key,
         image_column, split, max_samples, push_to_hub, hf_token,
         dataset_config=dataset_config,
+        dedupe=dedupe, dedupe_key_columns=dedupe_key_columns,
     )
 
 
@@ -267,6 +289,12 @@ def _cli() -> None:
     parser.add_argument("--hf-token", default=None)
     parser.add_argument("--dataset-config", default=None,
                         help="Dataset config name (multi-config datasets)")
+    parser.add_argument("--dedupe", action="store_true",
+                        help="Collapse repeated images to one row before "
+                             "labelling (Hub mode).")
+    parser.add_argument("--dedupe-key-columns", default=None,
+                        help="Comma-separated column(s) identifying the same "
+                             "image for --dedupe (default: image-content hash).")
     args = parser.parse_args()
 
     label_dataset(
@@ -283,6 +311,11 @@ def _cli() -> None:
         push_to_hub=args.push_to_hub,
         hf_token=args.hf_token,
         dataset_config=args.dataset_config,
+        dedupe=args.dedupe,
+        dedupe_key_columns=(
+            [c.strip() for c in args.dedupe_key_columns.split(",") if c.strip()]
+            if args.dedupe_key_columns else None
+        ),
     )
 
 

@@ -63,8 +63,10 @@ DIR=/data/docvqa-qwen
 
 # 1 — label (router, CPU). --timeout 3h: the full 1000-row push runs past the
 # default timeout and gets flagged ERROR even though the data uploaded fine.
+# --dedupe: DocVQA has ~3.4 question rows per page, so dedupe by docId first
+# (1000 rows → 296 unique pages) to avoid labelling each page several times.
 hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN --timeout 3h $REF -d \
-  jobs/label_qwen.py -- --output merve/docvqa-media-labeled-qwen
+  jobs/label_qwen.py -- --output merve/docvqa-media-labeled-qwen --dedupe
 
 # 2 — judges (after stage 1 SUCCEEDED; run both in parallel)
 # NB: --timeout 3h — gemma-8B over 1000 rows on l4x1 runs past the default job
@@ -84,7 +86,9 @@ hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
   --min-agree 2 --max-area-frac 0.9
 
-# 4 — train RF-DETR (after merge SUCCEEDED)
+# 4 — train RF-DETR (after merge SUCCEEDED). The val split is grouped by image
+# (tools.dataset_utils.grouped_train_val_split), so repeated images can't leak
+# across train/val — no need to pre-split.
 hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN $REF --timeout 6h -d \
   jobs/train_rfdetr_job.py -- --epochs 10 --batch-size 8 \
   --source merve/docvqa-media-judged-ensemble \
