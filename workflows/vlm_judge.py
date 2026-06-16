@@ -42,6 +42,21 @@ def _is_local_dir(source: str | Path) -> bool:
 # Prompt / parsing (shared by both modes)
 # ------------------------------------------------------------------
 
+# Category definitions, kept consistent with the labeller prompt
+# (tools.vlm_detect / jobs.label_local) so the judge rejects the same
+# confusions the labeller is told to avoid (tables-as-chart, page-as-image).
+_CLASS_HINTS = {
+    "chart": ("a data visualisation that plots values (bar/line/pie chart, "
+              "graph, plot). A table, grid, or matrix of text/numbers is NOT a "
+              "chart — mark it incorrect."),
+    "image": ("an embedded photograph, illustration, drawing, logo, map, or "
+              "figure. The whole page, a document scan, or a block of text is "
+              "NOT an image — mark it incorrect."),
+    "signature": ("a handwritten signature or initials. Printed or typed names "
+                  "are NOT signatures — mark it incorrect."),
+}
+
+
 def _build_judge_prompt_overlay(detections: list[dict]) -> str:
     """Judge prompt for the *overlay* image: each box is drawn and numbered on
     the image itself, so we only list the proposed label per index — no raw
@@ -52,13 +67,24 @@ def _build_judge_prompt_overlay(detections: list[dict]) -> str:
     ]
     ann_block = "\n".join(lines) if lines else "  (none)"
 
+    # Definitions only for the labels actually proposed on this image.
+    present = [c for c in dict.fromkeys(
+        str(det.get("label", "")).lower() for det in detections)
+        if c in _CLASS_HINTS]
+    defs_block = ""
+    if present:
+        defs = "\n".join(f"  - {c}: {_CLASS_HINTS[c]}" for c in present)
+        defs_block = f"Category definitions:\n{defs}\n\n"
+
     return (
         "You are a quality-control judge for object-detection annotations.\n"
         "Each proposed detection is drawn on the image as a numbered coloured "
         "box (#0, #1, …) with its label.\n\n"
+        f"{defs_block}"
         f"Proposed detections:\n{ann_block}\n\n"
         "Look at what is actually inside each numbered box and evaluate:\n"
-        "  1. Is the labelled object actually present inside that box?\n"
+        "  1. Is the labelled object actually present inside that box, matching "
+        "the category definition above?\n"
         "  2. Is the box reasonably tight around the object?\n"
         "Return ONLY a JSON array — one entry per box:\n"
         '[{"id": <box number>, "verdict": "correct"|"incorrect"|"imprecise", '

@@ -129,6 +129,7 @@ def vlm_detect(
     backend: str = "transformers",
     base_url: str | None = None,
     api_key: str | None = None,
+    class_descriptions: dict[str, str] | None = None,
 ) -> list[dict]:
     """Detect objects in *image* using a VLM with a free-form prompt.
 
@@ -150,6 +151,10 @@ def vlm_detect(
         API endpoint for the ``openai`` backend.
     api_key : str, optional
         API key / HF token for the ``openai`` backend.
+    class_descriptions : dict[str, str], optional
+        Per-class definitions injected into the auto-built prompt to
+        disambiguate look-alike categories (e.g. chart vs table) and curb
+        common failure modes.  Ignored when an explicit *prompt* is given.
 
     Returns
     -------
@@ -163,13 +168,28 @@ def vlm_detect(
     if prompt is None:
         if classes:
             class_list = ", ".join(classes)
+            if class_descriptions:
+                defs = "\n".join(
+                    f"- {c}: {class_descriptions[c]}"
+                    for c in classes if c in class_descriptions
+                )
+                category_block = (
+                    f"Detect every instance of these categories:\n{defs}\n"
+                )
+            else:
+                category_block = (
+                    f"Detect every instance of these categories: {class_list}. "
+                )
             prompt = (
-                f"Detect every instance of these categories: {class_list}. "
-                "For each, return a JSON object with "
+                f"{category_block}"
+                "Draw each box tightly around the single element it refers to. "
+                "Do NOT return a box covering the whole page or most of it, and "
+                "do NOT box plain text, paragraphs, or headers. "
+                "For each instance, return a JSON object with "
                 '"bbox_2d" ([x1, y1, x2, y2] normalised 0-1000), '
                 '"label" (one of the listed categories), '
                 'and "sub_label" (short attribute or ""). '
-                "Return a JSON array."
+                "Return a JSON array, or [] if none are present."
             )
         else:
             prompt = DEFAULT_PROMPT
