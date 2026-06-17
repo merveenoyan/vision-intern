@@ -56,6 +56,11 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=5e-5,
                    help="Peak LR. Lower it (e.g. 1e-5) when continuing from an "
                         "already-converged checkpoint.")
+    p.add_argument("--no-augment", action="store_true",
+                   help="Disable Albumentations aug. Needed for direction/colour"
+                        "-coded classes: HorizontalFlip mirrors left/right signs "
+                        "and colour jitter scrambles light colours, both "
+                        "label-breaking for road signs.")
     p.add_argument("--output-dir", default="checkpoints/rfdetr-docvqa-moondream")
     p.add_argument("--hub-model-id", default="merve/rfdetr-docvqa-moondream")
     args = p.parse_args()
@@ -70,6 +75,7 @@ def main() -> None:
         "--epochs", str(args.epochs),
         "--batch-size", str(args.batch_size),
         "--lr", str(args.lr),
+        *(["--no-augment"] if args.no_augment else []),
         "--output-dir", args.output_dir,
         "--push-to-hub",
         "--hub-model-id", args.hub_model_id,
