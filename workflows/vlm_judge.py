@@ -45,7 +45,7 @@ def _is_local_dir(source: str | Path) -> bool:
 # Category definitions, kept consistent with the labeller prompt
 # (tools.vlm_detect / jobs.label_local) so the judge rejects the same
 # confusions the labeller is told to avoid (tables-as-chart, page-as-image).
-_CLASS_HINTS = {
+_DOC_HINTS = {
     "chart": ("a data visualisation that plots values (bar/line/pie chart, "
               "graph, plot). A table, grid, or matrix of text/numbers is NOT a "
               "chart — mark it incorrect."),
@@ -55,6 +55,76 @@ _CLASS_HINTS = {
     "signature": ("a handwritten signature or initials. Printed or typed names "
                   "are NOT signatures — mark it incorrect."),
 }
+
+# Road-sign hints for Francesco/road-signs-6ih4y — kept in sync with
+# jobs.label_roadsign.ROADSIGN_DESCRIPTIONS so the judge rejects the same
+# look-alike confusions the labeller is told to avoid (directional no-turn
+# signs, lit-light colour vs generic fixture, parking vs no-parking, the two
+# pedestrian-crossing variants).
+_ROADSIGN_HINTS = {
+    "stop": ("a red octagonal sign with white 'STOP' text. A generic red sign, "
+             "red circle, or brake light is NOT a stop sign — mark it incorrect."),
+    "parking": ("a sign with a large letter 'P' meaning parking is allowed. A "
+                "'no parking' sign with a red slash/border is NOT this — mark it "
+                "incorrect."),
+    "warning": ("a yellow or red triangular caution sign with a black symbol. A "
+                "circular or rectangular sign is NOT this — mark it incorrect."),
+    "bus_stop": ("a sign marking a bus stop (usually a bus icon). A generic blue "
+                 "sign is NOT this — mark it incorrect."),
+    "do_not_enter": ("a red circle crossed by a single horizontal white bar (no "
+                     "entry). A stop sign or a no-turn arrow sign is NOT this — "
+                     "mark it incorrect."),
+    "do_not_stop": ("a circle with a red cross or single diagonal slash (no "
+                    "stopping). A plain 'P' or no-parking sign is NOT this — "
+                    "mark it incorrect."),
+    "do_not_turn_l": ("a red circle with a LEFT-turn arrow crossed out. If the "
+                      "arrow points right or is a U-turn, it is NOT this — mark "
+                      "it incorrect."),
+    "do_not_turn_r": ("a red circle with a RIGHT-turn arrow crossed out. If the "
+                      "arrow points left or is a U-turn, it is NOT this — mark "
+                      "it incorrect."),
+    "do_not_u_turn": ("a red circle with a U-shaped turn arrow crossed out. A "
+                      "no-left/right-turn sign is NOT this — mark it incorrect."),
+    "enter_left_lane": ("a sign directing traffic into the left lane (left/bent "
+                        "arrow, not crossed out). A no-left-turn sign is NOT "
+                        "this — mark it incorrect."),
+    "green_light": ("a traffic signal head whose GREEN lamp is lit. An unlit "
+                    "signal, a red/yellow lamp, or a green street lamp is NOT "
+                    "this — mark it incorrect."),
+    "left_right_lane": ("a sign with arrows pointing BOTH left and right "
+                        "(both lanes/turns allowed). A single-direction arrow is "
+                        "NOT this — mark it incorrect."),
+    "no_parking": ("a circle (often blue, red border, red diagonal slash) or a "
+                   "'P' crossed out (no parking). A plain 'P' parking sign is "
+                   "NOT this — mark it incorrect."),
+    "ped_crossing": ("a triangular/diamond WARNING sign with a walking-person "
+                     "symbol. The rectangular blue zebra-crossing sign is NOT "
+                     "this — mark it incorrect."),
+    "ped_zebra_cross": ("a blue/white rectangular sign showing a person on "
+                        "striped (zebra) markings. The triangular warning "
+                        "version is NOT this — mark it incorrect."),
+    "railway_crossing": ("an X-shaped (St Andrew's) cross or a triangle with a "
+                         "train/fence symbol. A generic warning triangle is NOT "
+                         "this — mark it incorrect."),
+    "red_light": ("a traffic signal head whose RED lamp is lit. A yellow/green "
+                  "lamp, a stop sign, or a tail light is NOT this — mark it "
+                  "incorrect."),
+    "t_intersection_l": ("a warning sign for a T-shaped intersection. A "
+                         "crossroads or turn-arrow sign is NOT this — mark it "
+                         "incorrect."),
+    "traffic_light": ("a traffic signal head / 'signal ahead' sign where no "
+                      "single lamp colour is clearly lit. A single lit "
+                      "red/yellow/green lamp is NOT this — mark it incorrect."),
+    "u_turn": ("a U-shaped turn arrow with NO crossing-out (U-turn permitted). A "
+               "no-U-turn sign is NOT this — mark it incorrect."),
+    "yellow_light": ("a traffic signal head whose YELLOW/AMBER lamp is lit. A "
+                     "red or green lamp is NOT this — mark it incorrect."),
+}
+
+# Merged registry — additive, so the same judge job serves both datasets. The
+# overlay prompt only emits definitions for labels actually present on an image,
+# so carrying both sets of keys is harmless.
+_CLASS_HINTS = {**_DOC_HINTS, **_ROADSIGN_HINTS}
 
 
 def _build_judge_prompt_overlay(detections: list[dict]) -> str:
