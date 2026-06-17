@@ -412,6 +412,14 @@ def _compute_metrics(evaluation_results, image_processor, threshold=0.0, id2labe
         name = id2label[class_id.item()] if id2label is not None else class_id.item()
         metrics[f"map_{name}"] = class_map
         metrics[f"mar_100_{name}"] = class_mar
+    # Emit every known class every eval, even when torchmetrics omits one that had
+    # no preds/targets this epoch. Without this the per-class column set varies
+    # across epochs and transformers' model-card make_markdown_table raises a
+    # KeyError on the first column missing from row 0 (e.g. 'Map Ped Zebra Cross').
+    if id2label is not None:
+        for name in id2label.values():
+            metrics.setdefault(f"map_{name}", torch.tensor(-1.0))
+            metrics.setdefault(f"mar_100_{name}", torch.tensor(-1.0))
     return {k: round(v.item(), 4) for k, v in metrics.items()}
 
 
