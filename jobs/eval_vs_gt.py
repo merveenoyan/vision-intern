@@ -79,7 +79,11 @@ def main() -> None:
         ds = ds.select(range(min(args.max_samples, len(ds))))
 
     # GT ClassLabel names (index → name), incl. the unused 'road-signs' supercat.
-    gt_names = ds.features["objects"].feature["category"].names
+    # `objects` may be a dict-of-lists feature or a Sequence-of-dict — handle both.
+    obj_feat = ds.features["objects"]
+    cat_feat = (obj_feat["category"] if isinstance(obj_feat, dict)
+                else obj_feat.feature["category"])
+    gt_names = cat_feat.feature.names if hasattr(cat_feat, "feature") else cat_feat.names
     print(f"GT has {len(gt_names)} category names", flush=True)
 
     metric = MeanAveragePrecision(box_format="xyxy", class_metrics=True)
