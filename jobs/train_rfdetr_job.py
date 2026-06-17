@@ -49,9 +49,13 @@ def main() -> None:
     p.add_argument("--train-split", default="test")
     p.add_argument("--val-split", default="none")
     p.add_argument("--val-size", type=float, default=0.15)
-    p.add_argument("--model", default="Roboflow/rf-detr-base")
+    p.add_argument("--model", default="Roboflow/rf-detr-base",
+                   help="Base checkpoint, or a prior fine-tune to CONTINUE from.")
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--lr", type=float, default=5e-5,
+                   help="Peak LR. Lower it (e.g. 1e-5) when continuing from an "
+                        "already-converged checkpoint.")
     p.add_argument("--output-dir", default="checkpoints/rfdetr-docvqa-moondream")
     p.add_argument("--hub-model-id", default="merve/rfdetr-docvqa-moondream")
     args = p.parse_args()
@@ -65,6 +69,7 @@ def main() -> None:
         "--model", args.model,
         "--epochs", str(args.epochs),
         "--batch-size", str(args.batch_size),
+        "--lr", str(args.lr),
         "--output-dir", args.output_dir,
         "--push-to-hub",
         "--hub-model-id", args.hub_model_id,
