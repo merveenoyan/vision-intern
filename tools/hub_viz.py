@@ -68,6 +68,7 @@ def push_dataset_with_viz(
     num_samples: int = 12,
     seed: int = 1337,
     revision: str = "main",
+    split: str | None = None,
 ) -> None:
     """Push *ds* to *repo_id* and publish a box-overlay gallery to its README.
 
@@ -88,7 +89,10 @@ def push_dataset_with_viz(
     except Exception:
         pass  # no existing README (new repo) — nothing to clear
 
-    ds.push_to_hub(repo_id, token=token)
+    if split is not None:
+        ds.push_to_hub(repo_id, token=token, split=split)
+    else:
+        ds.push_to_hub(repo_id, token=token)
     print(f"Pushed dataset → https://huggingface.co/datasets/{repo_id}")
 
     try:
