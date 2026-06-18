@@ -54,24 +54,20 @@ def main() -> None:
     from tools.label_checkpoint import load_checkpoint, load_deduped, stable_keys
     from tools.utils import load_image
     from tools.vlm_detect import vlm_detect
+    from workflows.vlm_judge import generate_object_specs
 
     token = os.environ["HF_TOKEN"]
     classes = [c.strip().lower() for c in args.classes.split(",") if c.strip()]
     class_set = set(classes)
-    # Definitions that disambiguate the look-alikes Qwen confused on DocVQA:
-    # tables mislabelled as charts, and whole pages boxed as "image".
-    CLASS_DESCRIPTIONS = {
-        "chart": ("a data visualisation that plots values — bar/line/pie chart, "
-                  "graph, or plot. NOT a table, grid, or matrix of text/numbers "
-                  "(those are tables, do not detect them)."),
-        "image": ("an embedded photograph, illustration, drawing, logo, map, or "
-                  "figure inside the page. NOT the whole page, NOT a scan of the "
-                  "document itself, and NOT a block of text or a table."),
-        "signature": ("a handwritten signature or initials. NOT printed names or "
-                      "typed text."),
-    }
-    class_descriptions = {c: CLASS_DESCRIPTIONS[c] for c in classes
-                          if c in CLASS_DESCRIPTIONS}
+    # Disambiguating definitions are generated once from the class set via the
+    # prompt-creation meta-prompt (no hand-written, dataset-specific dicts), then
+    # reused for every row.  The judge uses the same generator, so both stages
+    # reject the same look-alike confusions.
+    class_descriptions = generate_object_specs(
+        classes, args.model, backend="openai", base_url=None, api_key=token,
+    )
+    print(f"Generated definitions for {len(class_descriptions)}/{len(classes)} "
+          f"classes: {sorted(class_descriptions)}", flush=True)
     key_cols = [c.strip() for c in args.dedupe_key_columns.split(",") if c.strip()]
     ckpt = Path(args.checkpoint)
 

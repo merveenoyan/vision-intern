@@ -31,7 +31,7 @@ from tqdm import tqdm
 from tools.utils import load_image
 from tools.vlm_client import run_vlm
 
-DEFAULT_VLM = "Qwen/Qwen2.5-VL-7B-Instruct"
+DEFAULT_VLM = "Qwen/Qwen3.5-9B"
 
 
 def _is_local_dir(source: str | Path) -> bool:
@@ -39,95 +39,89 @@ def _is_local_dir(source: str | Path) -> bool:
 
 
 # ------------------------------------------------------------------
-# Prompt / parsing (shared by both modes)
+# Object specification  (a single "prompt-creation" meta-prompt)
 # ------------------------------------------------------------------
-
-# Category definitions, kept consistent with the labeller prompt
-# (tools.vlm_detect / jobs.label_local) so the judge rejects the same
-# confusions the labeller is told to avoid (tables-as-chart, page-as-image).
-_DOC_HINTS = {
-    "chart": ("a data visualisation that plots values (bar/line/pie chart, "
-              "graph, plot). A table, grid, or matrix of text/numbers is NOT a "
-              "chart — mark it incorrect."),
-    "image": ("an embedded photograph, illustration, drawing, logo, map, or "
-              "figure. The whole page, a document scan, or a block of text is "
-              "NOT an image — mark it incorrect."),
-    "signature": ("a handwritten signature or initials. Printed or typed names "
-                  "are NOT signatures — mark it incorrect."),
-}
-
-# Road-sign hints for Francesco/road-signs-6ih4y — kept in sync with
-# jobs.label_roadsign.ROADSIGN_DESCRIPTIONS so the judge rejects the same
-# look-alike confusions the labeller is told to avoid (directional no-turn
-# signs, lit-light colour vs generic fixture, parking vs no-parking, the two
-# pedestrian-crossing variants).
-_ROADSIGN_HINTS = {
-    "stop": ("a red octagonal sign with white 'STOP' text. A generic red sign, "
-             "red circle, or brake light is NOT a stop sign — mark it incorrect."),
-    "parking": ("a sign with a large letter 'P' meaning parking is allowed. A "
-                "'no parking' sign with a red slash/border is NOT this — mark it "
-                "incorrect."),
-    "warning": ("a yellow or red triangular caution sign with a black symbol. A "
-                "circular or rectangular sign is NOT this — mark it incorrect."),
-    "bus_stop": ("a sign marking a bus stop (usually a bus icon). A generic blue "
-                 "sign is NOT this — mark it incorrect."),
-    "do_not_enter": ("a red circle crossed by a single horizontal white bar (no "
-                     "entry). A stop sign or a no-turn arrow sign is NOT this — "
-                     "mark it incorrect."),
-    "do_not_stop": ("a circle with a red cross or single diagonal slash (no "
-                    "stopping). A plain 'P' or no-parking sign is NOT this — "
-                    "mark it incorrect."),
-    "do_not_turn_l": ("a red circle with a LEFT-turn arrow crossed out. If the "
-                      "arrow points right or is a U-turn, it is NOT this — mark "
-                      "it incorrect."),
-    "do_not_turn_r": ("a red circle with a RIGHT-turn arrow crossed out. If the "
-                      "arrow points left or is a U-turn, it is NOT this — mark "
-                      "it incorrect."),
-    "do_not_u_turn": ("a red circle with a U-shaped turn arrow crossed out. A "
-                      "no-left/right-turn sign is NOT this — mark it incorrect."),
-    "enter_left_lane": ("a sign directing traffic into the left lane (left/bent "
-                        "arrow, not crossed out). A no-left-turn sign is NOT "
-                        "this — mark it incorrect."),
-    "green_light": ("a traffic signal head whose GREEN lamp is lit. An unlit "
-                    "signal, a red/yellow lamp, or a green street lamp is NOT "
-                    "this — mark it incorrect."),
-    "left_right_lane": ("a sign with arrows pointing BOTH left and right "
-                        "(both lanes/turns allowed). A single-direction arrow is "
-                        "NOT this — mark it incorrect."),
-    "no_parking": ("a circle (often blue, red border, red diagonal slash) or a "
-                   "'P' crossed out (no parking). A plain 'P' parking sign is "
-                   "NOT this — mark it incorrect."),
-    "ped_crossing": ("a triangular/diamond WARNING sign with a walking-person "
-                     "symbol. The rectangular blue zebra-crossing sign is NOT "
-                     "this — mark it incorrect."),
-    "ped_zebra_cross": ("a blue/white rectangular sign showing a person on "
-                        "striped (zebra) markings. The triangular warning "
-                        "version is NOT this — mark it incorrect."),
-    "railway_crossing": ("an X-shaped (St Andrew's) cross or a triangle with a "
-                         "train/fence symbol. A generic warning triangle is NOT "
-                         "this — mark it incorrect."),
-    "red_light": ("a traffic signal head whose RED lamp is lit. A yellow/green "
-                  "lamp, a stop sign, or a tail light is NOT this — mark it "
-                  "incorrect."),
-    "t_intersection_l": ("a warning sign for a T-shaped intersection. A "
-                         "crossroads or turn-arrow sign is NOT this — mark it "
-                         "incorrect."),
-    "traffic_light": ("a traffic signal head / 'signal ahead' sign where no "
-                      "single lamp colour is clearly lit. A single lit "
-                      "red/yellow/green lamp is NOT this — mark it incorrect."),
-    "u_turn": ("a U-shaped turn arrow with NO crossing-out (U-turn permitted). A "
-               "no-U-turn sign is NOT this — mark it incorrect."),
-    "yellow_light": ("a traffic signal head whose YELLOW/AMBER lamp is lit. A "
-                     "red or green lamp is NOT this — mark it incorrect."),
-}
-
-# Merged registry — additive, so the same judge job serves both datasets. The
-# overlay prompt only emits definitions for labels actually present on an image,
-# so carrying both sets of keys is harmless.
-_CLASS_HINTS = {**_DOC_HINTS, **_ROADSIGN_HINTS}
+#
+# The judge no longer carries per-use-case category hints.  Instead, given the
+# user's label set, the meta-prompt below has an LLM write one detailed positive
+# definition per label — what the object looks like.  The resulting
+# ``{label: definition}`` map is reused by BOTH the labeller (tools.vlm_detect
+# ``class_descriptions``) and this judge, so both stages share one definition of
+# each category without hand-written, dataset-specific dictionaries.
 
 
-def _build_judge_prompt_overlay(detections: list[dict]) -> str:
+def build_object_spec_prompt(labels: list[str]) -> str:
+    """Meta-prompt for *prompt creation*.
+
+    Given the user's *labels*, instruct an LLM to write one detailed, positive
+    visual definition per label — what each object looks like (shape, colour,
+    text/symbols, distinctive features).  Definitions are purely positive: no
+    "not a …" negatives or look-alike lists.  The output feeds both the
+    labelling prompt and the judge prompt.
+    """
+    label_block = "\n".join(f"  - {label}" for label in labels) or "  (none)"
+    return (
+        "You are writing the category definitions for an object-detection "
+        "labelling and quality-control pipeline.\n"
+        "These categories all come from ONE dataset.\n"
+        f"Define every category in this set:\n{label_block}\n\n"
+        "For EACH category, write ONE detailed, positive definition of what the "
+        "object looks like: its shape, colour, any text or symbols it carries, "
+        "and the distinctive visual features that identify it. Expand any "
+        "abbreviated or coded label name into plain words. When several "
+        "categories are visually similar, make each definition specific enough "
+        "to tell them apart — but describe only what the object IS, never what "
+        "it is not.\n"
+        "Return ONLY a JSON object mapping each category to its definition:\n"
+        '{"<category>": "<definition>", ...}'
+    )
+
+
+def _parse_object_specs(text: str) -> dict[str, str]:
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        raw = json.loads(match.group())
+    except json.JSONDecodeError:
+        return {}
+    return {str(k).lower(): str(v) for k, v in raw.items() if v}
+
+
+def generate_object_specs(
+    labels: list[str],
+    model_id: str,
+    *,
+    backend: str = "transformers",
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> dict[str, str]:
+    """Run the prompt-creation meta-prompt once and return ``{label: definition}``.
+
+    The task is text-only; a small blank image satisfies the VLM client without
+    needing a separate text endpoint.  (Some providers reject 1×1 images, so we
+    use 64×64.)  Called once per run, not per image.
+    """
+    if not labels:
+        return {}
+    prompt = build_object_spec_prompt(labels)
+    blank = Image.new("RGB", (64, 64), "white")
+    try:
+        response = run_vlm(
+            blank, prompt, model_id,
+            backend=backend, base_url=base_url, api_key=api_key,
+            max_tokens=2048,
+        )
+    except Exception as e:  # noqa: BLE001 — fall back to bare-label judging
+        print(f"\n  [warn] object-spec generation failed: {e}")
+        return {}
+    return _parse_object_specs(response)
+
+
+def _build_judge_prompt_overlay(
+    detections: list[dict],
+    class_descriptions: dict[str, str] | None = None,
+) -> str:
     """Judge prompt for the *overlay* image: each box is drawn and numbered on
     the image itself, so we only list the proposed label per index — no raw
     coordinates for the model to mentally project."""
@@ -138,12 +132,13 @@ def _build_judge_prompt_overlay(detections: list[dict]) -> str:
     ann_block = "\n".join(lines) if lines else "  (none)"
 
     # Definitions only for the labels actually proposed on this image.
+    class_descriptions = class_descriptions or {}
     present = [c for c in dict.fromkeys(
         str(det.get("label", "")).lower() for det in detections)
-        if c in _CLASS_HINTS]
+        if c in class_descriptions]
     defs_block = ""
     if present:
-        defs = "\n".join(f"  - {c}: {_CLASS_HINTS[c]}" for c in present)
+        defs = "\n".join(f"  - {c}: {class_descriptions[c]}" for c in present)
         defs_block = f"Category definitions:\n{defs}\n\n"
 
     return (
@@ -168,7 +163,9 @@ def _build_judge_prompt_coco(
     id2name: dict[int, str],
     width: int,
     height: int,
+    class_descriptions: dict[str, str] | None = None,
 ) -> str:
+    class_descriptions = class_descriptions or {}
     lines = []
     for ann in annotations:
         x, y, w, h = ann["bbox"]
@@ -179,9 +176,18 @@ def _build_judge_prompt_coco(
         )
     ann_block = "\n".join(lines) if lines else "  (none)"
 
+    present = [c for c in dict.fromkeys(
+        str(id2name[ann["category_id"]]).lower() for ann in annotations)
+        if c in class_descriptions]
+    defs_block = ""
+    if present:
+        defs = "\n".join(f"  - {c}: {class_descriptions[c]}" for c in present)
+        defs_block = f"Category definitions:\n{defs}\n\n"
+
     return (
         "You are a quality-control judge for object-detection annotations.\n"
         f"Image size: {width}\u00d7{height} pixels.\n\n"
+        f"{defs_block}"
         f"Current annotations:\n{ann_block}\n\n"
         "For EACH annotation evaluate:\n"
         "  1. Is the labelled object actually present at that location?\n"
@@ -244,6 +250,7 @@ def score_detections(
     base_url: str | None,
     api_key: str | None,
     overlay_img: Image.Image | None = None,
+    class_descriptions: dict[str, str] | None = None,
 ) -> list[dict]:
     """Run a single judge over one image's detections.
 
@@ -263,7 +270,7 @@ def score_detections(
         overlay_img = draw_detections(img, detections, show_index=True)
     elif not isinstance(overlay_img, Image.Image):
         overlay_img = load_image(overlay_img)
-    prompt = _build_judge_prompt_overlay(detections)
+    prompt = _build_judge_prompt_overlay(detections, class_descriptions)
     try:
         response = run_vlm(
             overlay_img, prompt, model_id,
@@ -359,6 +366,7 @@ def _judge_local(
     backend: str,
     base_url: str | None,
     api_key: str | None,
+    class_descriptions: dict[str, str] | None = None,
 ) -> dict:
     with open(annotations_path) as f:
         coco = json.load(f)
@@ -379,6 +387,7 @@ def _judge_local(
         image = load_image(image_dir / img_info["file_name"])
         prompt = _build_judge_prompt_coco(
             anns, id2name, img_info["width"], img_info["height"],
+            class_descriptions,
         )
         response = run_vlm(
             image, prompt, model_id,
@@ -429,6 +438,7 @@ def _judge_hub(
     push_to_hub: bool,
     hf_token: str | None,
     dataset_config: str | None = None,
+    class_descriptions: dict[str, str] | None = None,
 ) -> Any:
     from datasets import load_dataset
 
@@ -460,6 +470,7 @@ def _judge_hub(
                 img, dets, spec["model_id"],
                 backend=spec["backend"], base_url=spec["base_url"],
                 api_key=spec["api_key"], overlay_img=overlay,
+                class_descriptions=class_descriptions,
             )
             for spec in judge_specs
         }
@@ -511,6 +522,8 @@ def judge_labels(
     backend: str = "transformers",
     base_url: str | None = None,
     api_key: str | None = None,
+    labels: list[str] | None = None,
+    class_descriptions: dict[str, str] | None = None,
     *,
     image_column: str = "image",
     detections_column: str = "detections",
@@ -545,6 +558,15 @@ def judge_labels(
         detection.  ``0`` keeps everything (records verdicts only).
     backend / base_url / api_key
         Default inference backend for judges lacking their own spec.
+    labels : list[str], optional
+        The user's category set.  When given (and *class_descriptions* is not),
+        the first judge runs the prompt-creation meta-prompt once to generate a
+        visual definition per label, injected into the judge prompt to
+        disambiguate look-alikes.  See :func:`build_object_spec_prompt`.
+    class_descriptions : dict[str, str], optional
+        Pre-built ``{label: definition}`` map.  Overrides *labels* generation;
+        share it with the labeller (``tools.vlm_detect``) so both stages use
+        the same definitions.
     image_column / detections_column : str
         Column names (Hub mode only).
     split : str
@@ -565,6 +587,20 @@ def judge_labels(
     """
     judge_specs = _normalize_judges(judges, model_id, backend, base_url, api_key)
 
+    # Build the category definitions once: use what the caller supplied, else
+    # have the first judge generate them from the user's *labels* via the
+    # prompt-creation meta-prompt.  Reused across every image/judge in the run.
+    if class_descriptions is None and labels:
+        first = judge_specs[0]
+        class_descriptions = generate_object_specs(
+            labels, first["model_id"],
+            backend=first["backend"], base_url=first["base_url"],
+            api_key=first["api_key"],
+        )
+        if class_descriptions:
+            print(f"Generated definitions for {len(class_descriptions)} label(s): "
+                  f"{sorted(class_descriptions)}")
+
     if _is_local_dir(source):
         if annotations is None:
             raise ValueError(
@@ -575,12 +611,14 @@ def judge_labels(
             Path(source), Path(annotations), Path(output),
             first["model_id"], threshold, first["backend"],
             first["base_url"], first["api_key"],
+            class_descriptions=class_descriptions,
         )
     return _judge_hub(
         str(source), str(output),
         judge_specs, threshold, min_agree,
         image_column, detections_column, split, max_samples,
         push_to_hub, hf_token, dataset_config=dataset_config,
+        class_descriptions=class_descriptions,
     )
 
 
@@ -602,6 +640,14 @@ def _cli() -> None:
     parser.add_argument("--judges", default=None,
                         help="Comma-separated judge model ids for an ensemble "
                              "(overrides --model). All share --backend/--base-url.")
+    parser.add_argument("--labels", default=None,
+                        help="Comma-separated category labels. The first judge "
+                             "generates a visual definition per label (via the "
+                             "prompt-creation meta-prompt) to disambiguate "
+                             "look-alikes.")
+    parser.add_argument("--class-descriptions", default=None,
+                        help="JSON string or path to a {label: definition} map. "
+                             "Overrides --labels generation.")
     parser.add_argument("--threshold", type=float, default=0.0)
     parser.add_argument("--min-agree", type=int, default=1,
                         help="Min judges voting 'correct' to keep a detection "
@@ -625,6 +671,20 @@ def _cli() -> None:
         if args.judges else None
     )
 
+    label_list = (
+        [c.strip() for c in args.labels.split(",") if c.strip()]
+        if args.labels else None
+    )
+
+    class_descriptions = None
+    if args.class_descriptions:
+        spec = args.class_descriptions
+        if Path(spec).is_file():
+            spec = Path(spec).read_text()
+        class_descriptions = {
+            str(k).lower(): str(v) for k, v in json.loads(spec).items()
+        }
+
     judge_labels(
         source=args.source,
         output=args.output,
@@ -636,6 +696,8 @@ def _cli() -> None:
         backend=args.backend,
         base_url=args.base_url,
         api_key=args.api_key,
+        labels=label_list,
+        class_descriptions=class_descriptions,
         image_column=args.image_column,
         detections_column=args.detections_column,
         split=args.split,
