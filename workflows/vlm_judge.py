@@ -96,26 +96,56 @@ def generate_object_specs(
     base_url: str | None = None,
     api_key: str | None = None,
 ) -> dict[str, str]:
-    """Run the prompt-creation meta-prompt once and return ``{label: definition}``.
+    """Run the prompt-creation meta-prompt and return ``{label: definition}``.
 
     The task is text-only; a small blank image satisfies the VLM client without
     needing a separate text endpoint.  (Some providers reject 1×1 images, so we
     use 64×64.)  Called once per run, not per image.
+
+    Every label must end up with a non-empty definition: the router occasionally
+    returns an empty 200 (no exception, so run_vlm's own retry doesn't fire) or
+    silently omits/blanks individual categories, and a missing definition
+    degrades that class to bare-label judging for the whole run. So we re-ask —
+    targeting only the labels still missing — until all are filled or we run out
+    of attempts, then print the full set for inspection.
     """
     if not labels:
         return {}
-    prompt = build_object_spec_prompt(labels)
+    wanted = [c.lower() for c in labels]
     blank = Image.new("RGB", (64, 64), "white")
-    try:
-        response = run_vlm(
-            blank, prompt, model_id,
-            backend=backend, base_url=base_url, api_key=api_key,
-            max_tokens=2048,
-        )
-    except Exception as e:  # noqa: BLE001 — fall back to bare-label judging
-        print(f"\n  [warn] object-spec generation failed: {e}")
-        return {}
-    return _parse_object_specs(response)
+    specs: dict[str, str] = {}
+    max_attempts = 6
+    for attempt in range(max_attempts):
+        missing = [c for c in wanted if not specs.get(c)]
+        if not missing:
+            break
+        try:
+            response = run_vlm(
+                blank, build_object_spec_prompt(missing), model_id,
+                backend=backend, base_url=base_url, api_key=api_key,
+                max_tokens=4096,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"  [object-spec] attempt {attempt + 1} raised: {e}", flush=True)
+            continue
+        for k, v in _parse_object_specs(response).items():
+            if k in wanted and v and v.strip():
+                specs[k] = v.strip()
+        filled = sum(1 for c in wanted if specs.get(c))
+        print(f"  [object-spec] attempt {attempt + 1}: {filled}/{len(wanted)} "
+              f"definitions filled", flush=True)
+
+    missing = [c for c in wanted if not specs.get(c)]
+    if missing:
+        print(f"  [warn] object-spec: {len(missing)} label(s) still undefined "
+              f"after {max_attempts} attempts: {missing}", flush=True)
+
+    # Print every created definition so the prompts are auditable before the run.
+    print("  ===== category definitions =====", flush=True)
+    for c in wanted:
+        print(f"  - {c}: {specs.get(c, '(UNDEFINED)')}", flush=True)
+    print("  ================================", flush=True)
+    return specs
 
 
 def _build_judge_prompt_overlay(
