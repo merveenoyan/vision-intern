@@ -3,11 +3,13 @@ from __future__ import annotations
 import io
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-import numpy as np
-import torch
 from PIL import Image
+
+if TYPE_CHECKING:
+    import numpy as np
+    import torch
 
 _registry_lock = threading.Lock()
 _model_cache: dict[str, tuple[Any, Any]] = {}
@@ -33,8 +35,10 @@ def load_image(source: str | Path | Image.Image) -> Image.Image:
     return Image.open(source).convert("RGB")
 
 
-def masks_to_rle(masks: np.ndarray | torch.Tensor) -> list[dict]:
+def masks_to_rle(masks: "np.ndarray | torch.Tensor") -> list[dict]:
     """Encode binary masks (N, H, W) to COCO-style RLE dicts via pycocotools."""
+    import numpy as np
+    import torch
     from pycocotools import mask as mask_utils
 
     if isinstance(masks, torch.Tensor):
