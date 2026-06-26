@@ -17,10 +17,11 @@ the HF router (`openai` backend) on a CPU job — no GPU load. It uses the
 per-object `bbox_2d` (0-1000) prompt (`tools/vlm_detect`), giving tight boxes
 (median area ≈ 0.09 of the page).
 
-> **Alternative labeller — `label_moondream.py`** (`moondream/moondream3-preview`,
-> 9.3B, native `.detect()`, GPU `l4x1`). moondream is a detection specialist but
-> on *scanned document pages* it tends to return page-spanning boxes (median area
-> ≈ 0.98), so Qwen is the better fit for DocVQA. Kept for non-document imagery.
+> **Swapping the labeller.** Any VLM with a detection prompt works — the choice
+> is per-domain. A detection specialist like `moondream/moondream3-preview`
+> (native `.detect()`) is great on natural imagery but tends to return
+> page-spanning boxes on *scanned document pages* (median area ≈ 0.98), which is
+> why this DocVQA run uses Qwen's tight `bbox_2d` boxes instead.
 
 Each script clones this repo (`REPO_REF` env, default `multimodel-jobs`) for the
 shared `tools/` + `workflows/` helpers, so **push your branch before launching**.
@@ -51,6 +52,33 @@ when the column is absent (e.g. datasets labelled before this change).
 hf buckets create vision-agent-runs          # run bucket (idempotent)
 git push origin multimodel-jobs              # jobs clone this ref
 ```
+
+## Running the same scripts locally
+Nothing here is Jobs-only. Two knobs make a stage run on your machine against
+your working tree:
+
+- **Code: `REPO_DIR`.** Each script imports `tools/` + `workflows/` from a repo.
+  Unset, it clones `REPO_REF` (the Jobs default — no checkout there). Set
+  `REPO_DIR=$(pwd)` to use your **local edits** and skip the clone:
+  ```bash
+  HF_TOKEN=$(hf auth token) REPO_DIR=$(pwd) uv run jobs/judge_one.py -- \
+    --model google/gemma-4-E4B-it --dataset merve/roadsign-labeled-qwen \
+    --split train --out roadsigns/verdicts_gemma.parquet --max-samples 20
+  ```
+- **Data: the bucket, addressed directly.** The cross-stage verdicts live in the
+  bucket (canonical). On a Job it's FUSE-mounted at `/data`; locally there's no
+  mount, so the scripts address it over `hf://buckets/<id>` automatically. The
+  `--out` / `--verdicts` paths are **relative names** placed under the data root,
+  resolved as: `--data-root` → `$DATA_ROOT` → `/data` (if mounted) → the bucket
+  over `hf://`. So the *same* `--out roadsigns/verdicts_gemma.parquet` writes to
+  `/data/...` on a Job and to `hf://buckets/merve/vision-agent-runs/...` locally.
+  Override with `--data-root ./runs` (a plain local dir, fully offline) or
+  `--data-root hf://buckets/<id>` / `--bucket <id>`. Absolute paths and `hf://`
+  URIs are still accepted verbatim.
+
+Merge reads the same way — relative `--verdicts "label::roadsigns/v.parquet"`
+resolves under the data root, so a local merge can read verdicts a Job wrote to
+the bucket (and vice-versa).
 
 ## Smoke test (≈20 images, cheap)
 Append `--max-samples 20` to stages 1–3.

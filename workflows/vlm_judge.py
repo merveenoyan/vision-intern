@@ -54,10 +54,14 @@ def build_object_spec_prompt(labels: list[str]) -> str:
     """Meta-prompt for *prompt creation*.
 
     Given the user's *labels*, instruct an LLM to write one detailed, positive
-    visual definition per label — what each object looks like (shape, colour,
-    text/symbols, distinctive features).  Definitions are purely positive: no
-    "not a …" negatives or look-alike lists.  The output feeds both the
-    labelling prompt and the judge prompt.
+    visual definition per label.  Each definition must describe the **physical
+    object a detector draws a box around** — naming the kind of object first and
+    treating its text/symbols/colour as features carried *on* that object (e.g.
+    "a traffic sign showing a black left arrow crossed by a red slash", not just
+    "a black left arrow") — so the judge evaluates the whole object, not the
+    bare symbol or concept.  Definitions are purely positive: no "not a …"
+    negatives or look-alike lists.  The output feeds both the labelling prompt
+    and the judge prompt.
     """
     label_block = "\n".join(f"  - {label}" for label in labels) or "  (none)"
     return (
@@ -65,13 +69,16 @@ def build_object_spec_prompt(labels: list[str]) -> str:
         "labelling and quality-control pipeline.\n"
         "These categories all come from ONE dataset.\n"
         f"Define every category in this set:\n{label_block}\n\n"
-        "For EACH category, write ONE detailed, positive definition of what the "
-        "object looks like: its shape, colour, any text or symbols it carries, "
-        "and the distinctive visual features that identify it. Expand any "
-        "abbreviated or coded label name into plain words. When several "
-        "categories are visually similar, make each definition specific enough "
-        "to tell them apart — but describe only what the object IS, never what "
-        "it is not.\n"
+        "For EACH category, write ONE detailed, positive definition. Define the "
+        "PHYSICAL OBJECT a detector draws a bounding box around: name the kind "
+        "of object first, then describe the text, symbols, colour and shape it "
+        "CARRIES as features ON that object — e.g. \"a traffic sign showing a "
+        "black left arrow crossed by a red slash\", NOT just \"a black left "
+        "arrow\". Never define the bare symbol, message, or concept in "
+        "isolation. Expand any abbreviated or coded label name into plain "
+        "words. When several categories are visually similar, make each "
+        "definition specific enough to tell them apart — but describe only what "
+        "the object IS, never what it is not.\n"
         "Return ONLY a JSON object mapping each category to its definition:\n"
         '{"<category>": "<definition>", ...}'
     )

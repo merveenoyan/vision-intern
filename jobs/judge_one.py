@@ -43,9 +43,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Source of tools/ + workflows/. Set REPO_DIR to a local checkout (e.g.
+# `REPO_DIR=$(pwd)`) to run against your working tree; left unset it clones
+# REPO_REF (the default on HF Jobs, which has no checkout).
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/merveenoyan/vision-intern.git")
 REPO_REF = os.environ.get("REPO_REF", "multimodel-jobs")
-REPO_DIR = Path("/tmp/vision-intern")
+REPO_DIR = Path(os.environ.get("REPO_DIR", "/tmp/vision-intern"))
 if not REPO_DIR.exists():
     subprocess.run(["git", "clone", "--depth", "1", "--branch", REPO_REF,
                     REPO_URL, str(REPO_DIR)], check=True)
@@ -61,15 +64,44 @@ def main() -> None:
     p.add_argument("--overlay-column", default="detections_overlay",
                    help="Image column with numbered box overlays (rendered on "
                         "the fly when the column is absent).")
-    p.add_argument("--out", required=True, help="Output verdicts parquet path")
+    p.add_argument("--out", required=True,
+                   help="Verdicts parquet: a relative name is placed under the "
+                        "data root (--data-root / $DATA_ROOT / /data mount / the "
+                        "bucket); an absolute path or hf:// URI is used as-is.")
+    p.add_argument("--data-root", default=None,
+                   help="Where run artifacts live (local dir, /data, or "
+                        "hf://buckets/<id>). Default: auto (mount if present, "
+                        "else the bucket over hf://).")
+    p.add_argument("--bucket", default=None,
+                   help="Bucket id for the hf:// fallback (default "
+                        "merve/vision-agent-runs).")
+    p.add_argument("--class-descriptions", default=None,
+                   help="JSON {label: definition} the human approved (local "
+                        "path or hf:// URI). Injected into the judge prompt so "
+                        "it evaluates against the agreed definitions.")
     p.add_argument("--max-samples", type=int, default=None)
     args = p.parse_args()
+
+    from tools import run_store
 
     from datasets import load_dataset
     from PIL import Image
 
     from tools.utils import load_image
     from workflows.vlm_judge import score_detections
+
+    # Load the human-approved category definitions (local or hf://).
+    class_descriptions = None
+    if args.class_descriptions:
+        spec = args.class_descriptions
+        if "://" in spec:
+            import fsspec
+            with fsspec.open(spec, "r") as f:
+                raw = f.read()
+        else:
+            raw = Path(spec).read_text()
+        class_descriptions = {str(k).lower(): str(v) for k, v in json.loads(raw).items()}
+        print(f"Loaded {len(class_descriptions)} approved definition(s) from {spec}")
 
     ds = load_dataset(args.dataset, split=args.split)
     if args.max_samples:
@@ -90,19 +122,22 @@ def main() -> None:
             img, dets, args.model,
             backend="transformers", base_url=None, api_key=None,
             overlay_img=overlay,
+            class_descriptions=class_descriptions,
         )
         rows_out.append(verdicts)
         if i % 25 == 0:
             print(f"  [{i}/{len(ds)}] scored {len(verdicts)} dets")
 
     import pandas as pd
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({
+    out = run_store.resolve_artifact(
+        args.out, data_root=args.data_root,
+        bucket=args.bucket or run_store.DEFAULT_BUCKET,
+    )
+    run_store.write_parquet(pd.DataFrame({
         "row_idx": list(range(len(rows_out))),
         "model": [args.model] * len(rows_out),
         "verdicts": [json.dumps(v) for v in rows_out],
-    }).to_parquet(out)
+    }), out)
     print(f"Wrote verdicts → {out}  (STAGE 2 judge DONE)")
 
 

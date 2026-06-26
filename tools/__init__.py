@@ -32,6 +32,13 @@ compute_stats       Compute rich statistics for a COCO annotation file
 dedupe_by_image     Collapse a dataset to one row per unique image
 grouped_train_val_split  Train/val split with no image leaking across splits
 image_key           Stable content hash of an image (for the two helpers above)
+
+Agent tool layer
+----------------
+get_tools / get_tool / list_tools   Discover registered tools (+ JSON Schema)
+as_json_schema      Framework-agnostic ``{name, description, parameters}`` specs
+call                Invoke a tool by name, injecting hidden worker config
+configure / ToolConfig   Set per-role (default/labeller/judge) endpoint config
 """
 
 import importlib
@@ -59,6 +66,15 @@ _LAZY = {
     "dedupe_by_image": "dataset_utils",
     "grouped_train_val_split": "dataset_utils",
     "image_key": "dataset_utils",
+    # Agent tool layer (registry + config are torch-free).
+    "get_tools": "registry",
+    "get_tool": "registry",
+    "list_tools": "registry",
+    "as_json_schema": "registry",
+    "call": "registry",
+    "ToolSpec": "registry",
+    "configure": "config",
+    "ToolConfig": "config",
 }
 
 
@@ -93,4 +109,12 @@ __all__ = [
     "dedupe_by_image",
     "grouped_train_val_split",
     "image_key",
+    "get_tools",
+    "get_tool",
+    "list_tools",
+    "as_json_schema",
+    "call",
+    "ToolSpec",
+    "configure",
+    "ToolConfig",
 ]

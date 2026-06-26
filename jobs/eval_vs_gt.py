@@ -40,7 +40,9 @@ from pathlib import Path
 
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/merveenoyan/vision-intern.git")
 REPO_REF = os.environ.get("REPO_REF", "multimodel-jobs")
-REPO_DIR = Path("/tmp/vision-intern")
+# Set REPO_DIR to a local checkout (e.g. `REPO_DIR=$(pwd)`) to run against your
+# working tree; left unset it clones REPO_REF (the default on HF Jobs).
+REPO_DIR = Path(os.environ.get("REPO_DIR", "/tmp/vision-intern"))
 if not REPO_DIR.exists():
     subprocess.run(["git", "clone", "--depth", "1", "--branch", REPO_REF,
                     REPO_URL, str(REPO_DIR)], check=True)

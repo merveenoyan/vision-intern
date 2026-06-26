@@ -1,15 +1,16 @@
 """Shared bounding-box drawing for detection / judged datasets.
 
-A single :func:`draw_detections` used by the standalone ``visualize_*`` scripts
-**and** by :mod:`tools.hub_viz` (which overlays boxes on a sample of images
-every time a dataset is pushed to the Hub).
+A single :func:`draw_detections` used by :mod:`tools.hub_viz` (which overlays
+boxes on a sample of images every time a dataset is pushed to the Hub).
 """
 
 from __future__ import annotations
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Per-class colours for the DocVQA media classes; anything else falls back.
+# A few stable per-label colours; any label not listed falls back. These are
+# just illustrative defaults — labels are free-form, so most will use the
+# fallback colour.
 COLORS = {
     "table": "#FF6B6B",
     "image": "#4ECDC4",

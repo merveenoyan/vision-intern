@@ -61,17 +61,16 @@ from workflows import label_dataset
 # Local images → COCO JSON
 label_dataset(
     source="data/images",
-    classes=["table", "image", "chart"],
+    classes=["person", "car", "traffic light"],
     output="annotations.json",
 )
 
 # HF dataset → HF dataset with detections column
 label_dataset(
-    source="lmms-lab/DocVQA",
-    classes=["table", "image", "chart"],
-    output="merve/docvqa-labeled",
-    dataset_config="DocVQA",
-    split="test",
+    source="username/my-image-dataset",
+    classes=["person", "car", "traffic light"],
+    output="username/my-dataset-labeled",
+    split="train",
     max_samples=1000,
     push_to_hub=True,
     backend="openai",
@@ -79,6 +78,12 @@ label_dataset(
     api_key="sk-local",
 )
 ```
+
+`classes` is free-form — name whatever the task needs (document regions,
+products, road signs, defects, …). Worked use cases live in
+[`examples/`](examples/), one subfolder each (goal, classes, model-per-role,
+commands, outputs); the seed [`examples/docvqa-media`](examples/docvqa-media/)
+runs the full label → judge → train pipeline on HF Jobs.
 
 ### 2. Judge labels with a VLM
 
@@ -88,8 +93,8 @@ Score each detection and keep only the ones above a threshold.
 from workflows import judge_labels
 
 judge_labels(
-    source="merve/docvqa-labeled",
-    output="merve/docvqa-judged",
+    source="username/my-dataset-labeled",
+    output="username/my-dataset-judged",
     threshold=0.5,
     push_to_hub=True,
     backend="openai",
@@ -110,14 +115,14 @@ augmentation, and COCO-style **mAP / mAR** evaluation via `torchmetrics`.
 from workflows import train
 
 train(
-    source="merve/docvqa-judged",  # or a local COCO directory
+    source="username/my-dataset-judged",  # or a local COCO directory
     model_id="Roboflow/rf-detr-base",
     epochs=10,
     batch_size=8,
     augment=True,          # Albumentations (no-op if not installed)
     val_split="test",      # held-out split for mAP/mAR; None to skip eval
     push_to_hub=True,
-    hub_model_id="merve/rfdetr-docvqa",
+    hub_model_id="username/my-detector",
     report_to="trackio",   # live metric tracking
 )
 ```
@@ -133,6 +138,42 @@ Supported input formats (auto-detected):
 Any `AutoModelForObjectDetection` checkpoint works (RF-DETR, DETR, etc.); the
 default is `Roboflow/rf-detr-base`. RF-DETR requires `transformers>=5.10` and
 `timm`.
+
+## Using it as an agent toolkit
+
+The same functions are exposed as a discoverable, JSON-schema'd tool registry
+for an in-process orchestrating agent — no MCP server, no per-tool boilerplate.
+The agent enumerates tools, reads their schemas, and dispatches by name:
+
+```python
+import vision_agent as va   # or: from tools import get_tools, as_json_schema, call, configure, ToolConfig
+
+# 1. Configure worker endpoints once, by role. Credentials live here — never
+#    in a tool's schema, so the agent is never asked to fill an API key.
+va.configure(
+    labeller=va.ToolConfig(base_url="https://router.huggingface.co/v1",
+                            model_id="Qwen/Qwen3-VL-8B-Instruct"),
+    judge=va.ToolConfig(base_url="http://localhost:8084/v1",
+                        model_id="Qwen3-VL-4B-Instruct-Q8_0.gguf"),
+)
+
+# 2. Discover. get_tools() is torch-free by default (the openai-backed VLM
+#    tools, the label/judge workflows, and CPU helpers); pass
+#    include_train=True to also surface the local-GPU tools + `train`.
+specs = va.as_json_schema()        # [{name, description, parameters}, ...] — plain JSON Schema
+print([t.name for t in va.get_tools()])
+
+# 3. Dispatch by name. Hidden backend/model_id/base_url/api_key are injected
+#    from the role config; pass them explicitly to override per call.
+boxes = va.call("vlm_detect", image="photo.jpg", classes=["person", "car"])
+```
+
+`configure()` accepts `default` (VLM tools), `labeller` (`label_dataset`), and
+`judge` (`judge_labels`) roles. Any `ToolConfig` field left `None` falls through
+to the function's own default (`model_id`), the HF Inference Providers URL
+(`base_url`), or the `HF_TOKEN` / `OPENAI_API_KEY` env fallback (`api_key`). The
+same three can be set via `VISION_AGENT_BACKEND` / `VISION_AGENT_MODEL` /
+`VISION_AGENT_BASE_URL`.
 
 ## Inference backends
 
@@ -217,34 +258,35 @@ Each workflow can also be run from the command line:
 ```bash
 # Label (7-8B labeller, here via HF Inference Providers)
 python -m workflows.vlm_label \
-    --source lmms-lab/DocVQA --dataset-config DocVQA \
-    --classes "table,image,chart,diagram,figure" \
-    --output merve/docvqa-labeled --push-to-hub \
+    --source username/my-image-dataset \
+    --classes "person,car,traffic light" \
+    --output username/my-dataset-labeled --push-to-hub \
     --backend openai --base-url https://router.huggingface.co/v1 \
     --api-key hf_... --model Qwen/Qwen3-VL-8B-Instruct \
-    --split test --max-samples 100
+    --split train --max-samples 100
 
 # Judge (small 4B judge, here on a local llama-server)
 python -m workflows.vlm_judge \
-    --source merve/docvqa-labeled \
-    --output merve/docvqa-judged --push-to-hub \
+    --source username/my-dataset-labeled \
+    --output username/my-dataset-judged --push-to-hub \
     --backend openai --base-url http://localhost:8084/v1 \
     --api-key sk-local-judge --model Qwen3-VL-4B-Instruct-Q8_0.gguf \
     --threshold 0.5
 
-# Train (mAP/mAR eval on the test split, push to the Hub)
+# Train (mAP/mAR eval on a held-out split, push to the Hub)
 python -m workflows.train_rfdetr \
-    --source merve/docvqa-judged --train-split test --val-split none \
+    --source username/my-dataset-judged --val-split test \
     --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 \
-    --output-dir checkpoints/rfdetr-docvqa
+    --output-dir checkpoints/my-detector
 ```
 
 ## Example: full pipeline with role-separated models
 
 Each role uses its own model (see "Recommended architecture" above). The
 labeller is the larger worker; the judge is a small, cheap verifier. The
-~12B orchestrator (e.g. Gemma-4) drives this script and is **never** used
-as a `model_id` here.
+~12B orchestrator drives this script and is **never** used as a `model_id`
+here. (For a fully worked multi-model run on HF Jobs, see
+[`jobs/README.md`](jobs/README.md).)
 
 Serve a small judge locally with llama-server (runs alongside the
 orchestrator with little VRAM):
@@ -281,11 +323,10 @@ JUDGE = dict(
 
 # Step 1: label
 label_dataset(
-    source="lmms-lab/DocVQA",
-    dataset_config="DocVQA",
-    classes=["table", "image", "chart", "diagram", "figure"],
-    output="merve/docvqa-media-labeled",
-    split="test",
+    source="username/my-image-dataset",
+    classes=["person", "car", "traffic light"],
+    output="username/my-dataset-labeled",
+    split="train",
     max_samples=1000,
     push_to_hub=True,
     **LABELLER,
@@ -293,8 +334,8 @@ label_dataset(
 
 # Step 2: judge
 judge_labels(
-    source="merve/docvqa-media-labeled",
-    output="merve/docvqa-media-judged",
+    source="username/my-dataset-labeled",
+    output="username/my-dataset-judged",
     threshold=0.5,
     push_to_hub=True,
     **JUDGE,
@@ -302,7 +343,7 @@ judge_labels(
 
 # Step 3: train
 train(
-    source="merve/docvqa-media-judged",
+    source="username/my-dataset-judged",
     epochs=10,
     batch_size=4,
 )

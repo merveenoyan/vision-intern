@@ -22,8 +22,8 @@ Examples
 Hub::
 
     python -m workflows.train_rfdetr \\
-        --source merve/docvqa-media-judged --train-split test \\
-        --epochs 10 --output-dir checkpoints/rfdetr
+        --source username/my-dataset-judged --val-split test \\
+        --epochs 10 --output-dir checkpoints/my-detector
 
 Local COCO::
 

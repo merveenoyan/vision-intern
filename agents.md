@@ -13,8 +13,13 @@ Every stage works on either a **local directory** (COCO format) or a **Hugging
 Face dataset**, with an OpenAI-compatible backend (HF Inference Providers, vLLM,
 llama-server, …) or a local `transformers` backend. The task domain is
 arbitrary — documents, road signs, products, anything you can name as classes.
-A full worked example (DocVQA media regions) lives in `jobs/README.md`; treat it
-as *one* demo, not the only use case.
+
+**Worked use cases live in `examples/`** — one subfolder per use case, each with
+its own README (goal, data, classes, model-per-role, exact commands, outputs,
+gotchas). Before building a new pipeline, **list `examples/` and read the
+closest one** — it shows a real class set and model wiring to imitate. Copy
+`examples/_template/` to start a new one. The seed example
+(`examples/docvqa-media/`) is *one* demo, not the only use case.
 
 ## Model architecture (the core design constraint)
 The pipeline uses **separate models for separate roles** — keep them on separate
@@ -62,6 +67,12 @@ cards' detection-prompt differences.
   dicts/lists. See `tools/__init__.py` for the public surface.
 - `workflows/` — the three pipeline stages as functions **and** CLIs:
   `label_dataset` / `judge_labels` / `train`.
+- `tools/registry.py` + `tools/config.py` — the **agent tool layer**: a lazy,
+  JSON-schema'd registry over the `tools/` + `workflows/` functions
+  (`get_tools` / `as_json_schema` / `call`) with credential/endpoint params
+  hidden behind per-role `ToolConfig` (`configure(default=/labeller=/judge=)`).
+  Re-exported from `tools/__init__.py` and the top-level `vision_agent.py` shim.
+  `get_tools()` is torch-free by default (skips `requires_train` tools).
 - `jobs/` — self-contained PEP-723 `uv` scripts that run the pipeline on **HF
   Jobs**, one model per role. They clone this repo for the shared `tools/` +
   `workflows/` helpers, so **push your branch before launching**. See
@@ -69,6 +80,10 @@ cards' detection-prompt differences.
 - `tests/` — `tests/unit/` (offline smoke tests: bbox round-trips, dataset
   grouping, job-script PEP-723 validity) and `tests/integration/` (opt-in,
   needs an HF token).
+- `examples/` — worked use cases, **one subfolder per use case** (each a README
+  recipe: goal/data/classes/models/commands/outputs/gotchas). Read-and-imitate;
+  nothing imports from here. New use cases get dumped here — copy
+  `examples/_template/`. See `examples/README.md`.
 - `README.md` — user-facing docs and API reference.
 
 ## Key modules
@@ -121,6 +136,9 @@ The unit suite includes a **job-script guard** that compile-checks every
 that HF Jobs will clone.
 
 ## Operating discipline (conventions)
+- **Check `examples/` first.** Before building a pipeline for a new domain, read
+  the closest use case in `examples/`; when a run is worth keeping, write it up
+  there (copy `examples/_template/`) and add it to the index.
 - **Keep the three roles on separate endpoints**; the orchestrator never runs
   inference.
 - **Smoke-test small, then scale.** Run any new stage with `--max-samples 20`
@@ -134,7 +152,11 @@ that HF Jobs will clone.
 - **Visualize on push.** Dataset pushes go through `push_dataset_with_viz()` so a
   box-overlay gallery ships with the data — no need to re-render to inspect.
 - **Use a bucket for multi-read/write** flows (the `jobs/` pipeline passes
-  verdicts between stages via `hf://buckets/.../`, mounted at `/data`).
+  verdicts between stages via `hf://buckets/.../`). On a Job the bucket is
+  mounted at `/data`; locally the scripts address it directly over `hf://` (via
+  `tools/run_store.py`), so a relative `--out`/`--verdicts` name works in both —
+  see `jobs/README.md` §"Running the same scripts locally". Run a stage against
+  your working tree with `REPO_DIR=$(pwd)` instead of the clone.
 - `viz_output/`, `viz_judged/`, `viz_test_predictions/` are local artifacts
   (gitignored).
 
@@ -145,7 +167,14 @@ that HF Jobs will clone.
   page-spanning area guard), recorded per box in `judge_verdicts`.
 - **Split-name footgun**: `push_to_hub` preserves the *source* split name, so
   downstream calls may need an explicit `train_split=<name>`.
-- **Packaging**: still a flat-layout `uv` project. A future step is moving
-  `tools/`/`workflows/` under a single `vision_agent/` import namespace so it can
-  be `pip install`ed and imported from anywhere (deferred; would touch every
-  import + the `jobs/` clone bootstrap).
+- **Agent tool layer**: done — `tools/registry.py` exposes the functions as a
+  JSON-schema'd, role-configured registry for an in-process agent
+  (`get_tools` / `as_json_schema` / `call`, see `README.md` §"Using it as an
+  agent toolkit"). Returns stay rich Python objects (in-process); a
+  wire/serialization layer (e.g. RLE-encoding `instance_segment`'s mask tensor)
+  is a thin future add.
+- **Packaging**: still a flat-layout `uv` project. The remaining deferred step is
+  moving `tools/`/`workflows/` under a single `vision_agent/` import namespace so
+  it can be `pip install`ed and imported from anywhere (would touch every import +
+  the `jobs/` clone bootstrap; the top-level `vision_agent.py` shim gives the
+  `import vision_agent` ergonomics in the meantime).

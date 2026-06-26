@@ -33,9 +33,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Source of tools/ + workflows/. Set REPO_DIR to a local checkout (e.g.
+# `REPO_DIR=$(pwd)`) to run against your working tree; left unset it clones
+# REPO_REF (the default on HF Jobs, which has no checkout).
 REPO_URL = os.environ.get("REPO_URL", "https://github.com/merveenoyan/vision-intern.git")
 REPO_REF = os.environ.get("REPO_REF", "multimodel-jobs")
-REPO_DIR = Path("/tmp/vision-intern")
+REPO_DIR = Path(os.environ.get("REPO_DIR", "/tmp/vision-intern"))
 if not REPO_DIR.exists():
     subprocess.run(["git", "clone", "--depth", "1", "--branch", REPO_REF,
                     REPO_URL, str(REPO_DIR)], check=True)
@@ -49,7 +52,16 @@ def main() -> None:
     p.add_argument("--detections-column", default="detections")
     p.add_argument("--output", default="merve/docvqa-media-judged-ensemble")
     p.add_argument("--verdicts", action="append", required=True,
-                   help="Repeatable 'label::parquet_path' pair, one per judge.")
+                   help="Repeatable 'label::parquet_path' pair, one per judge. "
+                        "A relative path resolves under the data root; an "
+                        "absolute path or hf:// URI is used as-is.")
+    p.add_argument("--data-root", default=None,
+                   help="Where run artifacts live (local dir, /data, or "
+                        "hf://buckets/<id>). Default: auto (mount if present, "
+                        "else the bucket over hf://).")
+    p.add_argument("--bucket", default=None,
+                   help="Bucket id for the hf:// fallback (default "
+                        "merve/vision-agent-runs).")
     p.add_argument("--min-agree", type=int, default=2,
                    help="Min judges voting 'correct' to keep a detection.")
     p.add_argument("--threshold", type=float, default=0.0)
@@ -59,9 +71,9 @@ def main() -> None:
     p.add_argument("--max-samples", type=int, default=None)
     args = p.parse_args()
 
-    import pandas as pd
     from datasets import load_dataset
 
+    from tools import run_store
     from tools.hub_viz import push_dataset_with_viz
     from workflows.vlm_judge import ensemble_row
 
@@ -70,8 +82,12 @@ def main() -> None:
     # Parse "label::path" pairs and load each judge's per-row verdicts.
     judge_rows: dict[str, dict[int, list]] = {}
     for spec in args.verdicts:
-        label, path = spec.split("::", 1)
-        df = pd.read_parquet(path)
+        label, raw_path = spec.split("::", 1)
+        path = run_store.resolve_artifact(
+            raw_path, data_root=args.data_root,
+            bucket=args.bucket or run_store.DEFAULT_BUCKET,
+        )
+        df = run_store.read_parquet(path)
         judge_rows[label] = {
             int(r.row_idx): json.loads(r.verdicts) for r in df.itertuples()
         }
