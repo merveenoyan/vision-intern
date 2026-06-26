@@ -116,13 +116,19 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
   jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_lfm.parquet
 
-# 3 — merge (after both judges SUCCEEDED)
+# 3 — merge (after both judges SUCCEEDED). ALWAYS emit BOTH ensemble policies as
+# separate repos: -agree1 (--min-agree 1, higher recall) and -agree2 (--min-agree
+# 2, higher precision). Both ship a box-overlay gallery (push_dataset_with_viz);
+# compare them (and optionally train both) before picking one. Same verdicts, two
+# cheap CPU merges.
+for AG in 1 2; do
 hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   jobs/merge_judges.py -- --dataset merve/docvqa-media-labeled-qwen \
-  --output merve/docvqa-media-judged-ensemble \
+  --output merve/docvqa-media-judged-ensemble-agree$AG \
   --verdicts "google/gemma-4-E4B-it::$DIR/verdicts_gemma.parquet" \
   --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
-  --min-agree 2 --max-area-frac 0.9
+  --min-agree $AG --max-area-frac 0.9
+done
 
 # 4 — train RF-DETR (after merge SUCCEEDED). Small curated set + ~10 epochs is
 # light and single-GPU, so l4x1 suffices (bump to l40sx1 only for large data /

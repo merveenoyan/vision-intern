@@ -163,6 +163,12 @@ that HF Jobs will clone.
   If data is unavailable, ask — don't substitute.
 - **Visualize on push.** Dataset pushes go through `push_dataset_with_viz()` so a
   box-overlay gallery ships with the data — no need to re-render to inspect.
+- **Always emit both ensemble policies as separate repos.** Run merge twice and
+  push `<output>-agree1` (`--min-agree 1`: keep if *any* judge says correct —
+  higher recall) **and** `<output>-agree2` (`--min-agree 2`: judges must agree —
+  higher precision). Both ship the box-overlay gallery automatically. Compare
+  them (and optionally train both) before committing to one — don't pick a
+  threshold blind.
 - **Use a bucket for multi-read/write** flows (the `jobs/` pipeline passes
   verdicts between stages via `hf://buckets/.../`). On a Job the bucket is
   mounted at `/data`; locally the scripts address it directly over `hf://` (via

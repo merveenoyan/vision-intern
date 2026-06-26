@@ -31,21 +31,25 @@ root) and an approval signal in your prompt.
 When unsure, you are in Phase 1. Never judge with unapproved or incomplete
 descriptions.
 
-## Inputs (from your prompt; defaults shown are the road-signs run)
+## Inputs (the caller provides these — there are no use-case defaults)
 - `labeled_dataset` — VLM-labelled dataset with `detections` (+ `detections_overlay`).
-  Default: `merve/roadsign-labeled-qwen` (split `train`).
-- `drop` — labels to exclude from the set (RF100 supercategory). Default: `road-signs`.
-- `judged_output` — default `merve/roadsign-judged-ensemble`.
-- `model_output` — default `merve/rfdetr-roadsign`.
-- `descriptions_file` — default `descriptions.json`.
-- Labeller/judge endpoints: default labeller `Qwen/Qwen3.5-9B` via the HF router
-  (`--backend openai --base-url https://router.huggingface.co/v1`); judges the
-  same ensemble as `examples/docvqa-media` — `google/gemma-4-E4B-it` +
-  `LiquidAI/LFM2.5-VL-1.6B` (different families, both smaller than the labeller).
-  Confirm endpoints exist before a full run; ask the caller if none are reachable.
+- `drop` — labels to exclude from the set (e.g. an RF100 supercategory). Optional.
+- `judged_output` — Hub id for the judged dataset.
+- `model_output` — Hub id for the trained model.
+- `descriptions_file` — where the approved `{label: definition}` JSON lives (default `descriptions.json`).
+- Labeller/judge endpoints. A reasonable default ensemble (toolkit recommendation,
+  not use-case-specific): labeller `Qwen/Qwen3.5-9B` via the HF router
+  (`--backend openai --base-url https://router.huggingface.co/v1`); judges
+  `google/gemma-4-E4B-it` + `LiquidAI/LFM2.5-VL-1.6B` (different families, both
+  smaller than the labeller). Confirm endpoints/models are reachable before a
+  full run; ask the caller if none are.
 
-If labelling is already done (a `labeled_dataset` is given, as for road-signs),
-**skip the label stage**. Only run `vlm_label` if asked to label from scratch.
+If a `labeled_dataset` is given, labelling is already done — **skip the label
+stage**; only run `vlm_label` if asked to label from scratch.
+
+For a concrete, worked instance of every value above (dataset, classes, models,
+exact commands, gotchas), read **`examples/roadsign-detection/`** — the
+use-case specifics live there, never in this prompt or the general repo.
 
 ## Phase 1 — generate judge descriptions, then HALT
 1. Inspect the labeled dataset to confirm it has a `detections` column and find
@@ -74,16 +78,23 @@ non-empty definition (if not, drop back to Phase 1 and say so).
    scale.)
 2. **Judge** with the approved descriptions — the judge uses them verbatim and
    does **not** regenerate:
+   **Always emit BOTH ensemble policies as separate repos** — run the judge/merge
+   twice: `<judged_output>-agree1` (`--min-agree 1`, higher recall) and
+   `<judged_output>-agree2` (`--min-agree 2`, higher precision). Both ship a
+   box-overlay gallery automatically (`push_dataset_with_viz`). On the Jobs path
+   this is two `merge_judges.py` runs over the same verdicts.
    ```bash
-   uv run python -m workflows.vlm_judge \
-     --source <labeled_dataset> --output <judged_output> --push-to-hub \
-     --judges "google/gemma-4-E4B-it,LiquidAI/LFM2.5-VL-1.6B" \
-     --backend openai --base-url https://router.huggingface.co/v1 \
-     --class-descriptions <descriptions_file> \
-     --min-agree 2 --threshold 0.0 --split train
+   for AG in 1 2; do
+     uv run python -m workflows.vlm_judge \
+       --source <labeled_dataset> --output <judged_output>-agree$AG --push-to-hub \
+       --judges "google/gemma-4-E4B-it,LiquidAI/LFM2.5-VL-1.6B" \
+       --backend openai --base-url https://router.huggingface.co/v1 \
+       --class-descriptions <descriptions_file> \
+       --min-agree $AG --threshold 0.0 --split train
+   done
    ```
-   (`--min-agree 2`: both judges must vote `correct`. A page-spanning area guard
-   lives in the Jobs `merge_judges.py`; in-process, gate with `min-agree`.)
+   (A page-spanning area guard lives in the Jobs `merge_judges.py`; in-process,
+   gate with `min-agree`.)
 3. **Strip the human-GT `objects` column before training.** This labeled
    dataset carries an `objects` ClassLabel column (the original human GT); the
    RF-DETR trainer prioritizes `objects` over our VLM `detections`, so training
@@ -99,10 +110,9 @@ non-empty definition (if not, drop back to Phase 1 and say so).
      --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 \
      --hub-model-id <model_output> --output-dir checkpoints/<name>
    ```
-   Optionally evaluate against the original human GT
-   (`Francesco/road-signs-6ih4y` test split) with `jobs/eval_vs_gt.py` — the
-   true-quality number, since training eval only measures agreement with the
-   VLM-judged labels.
+   Optionally evaluate against a held-out human-GT split (if the source dataset
+   has one) with `jobs/eval_vs_gt.py` — the true-quality number, since training
+   eval only measures agreement with the VLM-judged labels.
 
 ## Reporting back
 Return a concise summary: which phase you ran, the commands executed, the
