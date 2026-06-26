@@ -120,7 +120,7 @@ uv run python -m workflows.vlm_judge  --source <labeled> --output <judged> \
 
 # Train (mAP/mAR eval optional; needs the `train` extra)
 uv run --extra train python -m workflows.train_rfdetr --source <judged> \
-  --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 --output-dir <dir>
+  --model Roboflow/rf-detr-large --epochs 20 --batch-size 8 --output-dir <dir>
 ```
 For the full multi-model run **on HF Jobs**, follow `jobs/README.md`
 (label → 2 judges in parallel → merge → train), passing artifacts between stages
@@ -152,7 +152,7 @@ that HF Jobs will clone.
 - **Pick the Jobs flavor by the compute bottleneck, not the stage name.** The
   heavy step is **judging with the larger VLM** (an ~8B judge over thousands of
   images is the long pole) → give it `l40sx1`. A **small judge** (≤2B) runs on
-  `l4x1`. **RF-DETR training on a small curated set** (~1–2K images, ~10 epochs)
+  `l4x1`. **RF-DETR training on a small curated set** (~1–2K images, ~20 epochs)
   is light + single-GPU → `l4x1` is plenty; reserve `l40sx1`/multi-GPU for large
   data or long schedules. CPU stages (router labelling, merge) → `cpu-upgrade`.
   So the big GPU usually goes to the *large judge*, not to training.
@@ -163,6 +163,14 @@ that HF Jobs will clone.
   If data is unavailable, ask — don't substitute.
 - **Visualize on push.** Dataset pushes go through `push_dataset_with_viz()` so a
   box-overlay gallery ships with the data — no need to re-render to inspect.
+- **Train with `Roboflow/rf-detr-large`, ~20 epochs** — the repo-wide default
+  (`workflows/train_rfdetr` `DEFAULT_MODEL`, `jobs/train_rfdetr_job`). Don't drop
+  to base/medium without a reason.
+- **Assess augmentation per use case — don't assume.** It defaults on, but for
+  clean/uniform imagery or already-tight labels it often *hurts* (road-signs:
+  no-aug mAP 0.66 vs aug 0.30). Reason about the data; when unsure, train both
+  `--augment` and `--no-augment` and compare mAP (cheap given both agree-policies
+  already train two models).
 - **Always emit both ensemble policies as separate repos.** Run merge twice and
   push `<output>-agree1` (`--min-agree 1`: keep if *any* judge says correct —
   higher recall) **and** `<output>-agree2` (`--min-agree 2`: judges must agree —

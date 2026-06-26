@@ -10,13 +10,13 @@ judges):
 | 2 Judge A | `judge_one.py` | `google/gemma-4-E4B-it` | Google | 8.0B | `l40sx1`² |
 | 2 Judge B | `judge_one.py` | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1`² |
 | 3 Merge | `merge_judges.py` | — (ensemble) | — | — | `cpu-upgrade` |
-| 4 Train | `train_rfdetr_job.py` | `Roboflow/rf-detr-base` | — | — | `l4x1`² |
+| 4 Train | `train_rfdetr_job.py` | `Roboflow/rf-detr-large` | — | — | `l4x1`² |
 
 > **² Pick the flavor by the compute bottleneck, not the stage name.** The
 > heavy step is **judging with the larger VLM** (an 8B judge over ~1.4K images is
 > the long pole) — give *that* the big GPU (`l40sx1`). A **small judge**
 > (≤2B, e.g. LFM-1.6B) runs fine on `l4x1`. **RF-DETR training on a small
-> curated set** (~1–2K images, ~10 epochs) is light and single-GPU — `l4x1` is
+> curated set** (~1–2K images, ~20 epochs) is light and single-GPU — `l4x1` is
 > plenty; reserve `l40sx1`/multi-GPU for large datasets or long schedules. So in
 > practice the big GPU goes to the *large judge*, not to training. CPU stages
 > (router labelling, merge) stay on `cpu-upgrade`.
@@ -130,13 +130,14 @@ hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   --min-agree $AG --max-area-frac 0.9
 done
 
-# 4 — train RF-DETR (after merge SUCCEEDED). Small curated set + ~10 epochs is
-# light and single-GPU, so l4x1 suffices (bump to l40sx1 only for large data /
-# long schedules). The val split is grouped by image
+# 4 — train RF-DETR (after merge SUCCEEDED). Defaults to rf-detr-large + 20
+# epochs; a small curated set is still light enough for l4x1 (bump to l40sx1 for
+# 30+ epochs / long schedules). Add --no-augment if the data trains better
+# without augmentation (assess per use case). The val split is grouped by image
 # (tools.dataset_utils.grouped_train_val_split), so repeated images can't leak
 # across train/val — no need to pre-split.
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $REF --timeout 6h -d \
-  jobs/train_rfdetr_job.py -- --epochs 10 --batch-size 8 \
+  jobs/train_rfdetr_job.py -- --epochs 20 --batch-size 8 \
   --source merve/docvqa-media-judged-ensemble \
   --hub-model-id merve/rfdetr-docvqa-qwen
 ```

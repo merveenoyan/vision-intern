@@ -8,7 +8,7 @@ from PIL import Image
 
 from .utils import get_or_load, load_image
 
-MODEL_ID = "Roboflow/rf-detr-base"
+MODEL_ID = "Roboflow/rf-detr-large"
 
 
 def _load() -> tuple[Any, Any]:

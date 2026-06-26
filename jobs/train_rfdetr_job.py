@@ -24,7 +24,7 @@ out 15% for mAP, and pushes the model to the Hub.
 
     hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 6h \
       -e REPO_REF=multimodel-jobs \
-      jobs/train_rfdetr_job.py -- --epochs 10 --batch-size 8
+      jobs/train_rfdetr_job.py -- --epochs 20 --batch-size 8
 """
 
 from __future__ import annotations
@@ -51,9 +51,9 @@ def main() -> None:
     p.add_argument("--train-split", default="test")
     p.add_argument("--val-split", default="none")
     p.add_argument("--val-size", type=float, default=0.15)
-    p.add_argument("--model", default="Roboflow/rf-detr-base",
+    p.add_argument("--model", default="Roboflow/rf-detr-large",
                    help="Base checkpoint, or a prior fine-tune to CONTINUE from.")
-    p.add_argument("--epochs", type=int, default=10)
+    p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--lr", type=float, default=5e-5,
                    help="Peak LR. Lower it (e.g. 1e-5) when continuing from an "

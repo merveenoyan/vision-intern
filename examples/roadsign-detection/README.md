@@ -35,7 +35,7 @@ t_intersection_l, traffic_light, u_turn, warning, yellow_light
 | Labeller | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | HF router (already run) |
 | Judge A | `google/gemma-4-E4B-it` | Google | 8.0B | `l40sx1` (the heavy judge — the long pole) |
 | Judge B | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` (small judge) |
-| Train | `Roboflow/rf-detr-base` | — | — | `l4x1` (small set, ~10 epochs — light) |
+| Train | `Roboflow/rf-detr-large` | — | — | `l40sx1` (large model, 20–30 epochs) |
 
 ## Commands
 The **only human-approval gate** is the judge descriptions. Generate them as a
@@ -61,10 +61,11 @@ uv run python -m workflows.vlm_judge \
 HF_TOKEN=$(hf auth token) python3 jobs/strip_objects.py \
   merve/roadsign-judged-ensemble merve/roadsign-judged-ensemble-trainready
 
-# 4 — train RF-DETR (val split grouped by image to avoid leakage)
+# 4 — train RF-DETR (val split grouped by image to avoid leakage).
+# This dataset trains markedly better WITHOUT augmentation (--no-augment).
 uv run --extra train python -m workflows.train_rfdetr \
   --source merve/roadsign-judged-ensemble-trainready --val-split test \
-  --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 \
+  --model Roboflow/rf-detr-large --epochs 20 --batch-size 8 --no-augment \
   --hub-model-id merve/rfdetr-roadsign --output-dir checkpoints/rfdetr-roadsign
 ```
 
@@ -79,6 +80,11 @@ uv run --extra train python -m workflows.train_rfdetr \
   pins the human-approved text for the whole run.
 - **Strip `objects` before training** — the RF-DETR trainer prioritizes a human
   `objects` column over our VLM `detections`, and non-0-based ids crash it.
+- **Augmentation hurts here — train with `--no-augment`.** On this dataset
+  `rf-detr-large` + 30 epochs + no-aug reached **mAP ≈ 0.66 / mAP@50 ≈ 0.77**,
+  vs ≈ 0.30 for `rf-detr-base` + 10 epochs + augmentation. The clean, centered
+  sign crops don't benefit from heavy augmentation. (Augmentation is use-case
+  dependent — assess per dataset.)
 - **VLM labels do contain errors** worth catching (e.g. a `yellow_light` sign
   labelled `red_light`, a `red_light` labelled `traffic_light`) — the point of
   the judge pass.

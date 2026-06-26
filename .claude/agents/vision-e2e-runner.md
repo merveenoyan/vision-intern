@@ -101,13 +101,17 @@ non-empty definition (if not, drop back to Phase 1 and say so).
    would silently learn the GT instead — and crashes on non-0-based ids. Drop
    `objects` (and the heavy `detections_overlay`) into a new repo, e.g. with
    `jobs/strip_objects.py <judged_output> <judged_output>-trainready`.
-4. **Train** RF-DETR on the train-ready dataset, always pushing with an explicit
-   id, with a generous timeout. The val split must be **grouped by image** so a
-   repeated image can't leak across train/val:
+4. **Train** RF-DETR (default `Roboflow/rf-detr-large`, ~20 epochs) on the
+   train-ready dataset, always pushing with an explicit id, with a generous
+   timeout. **Assess augmentation for the use case** — it defaults on but often
+   hurts clean/uniform imagery or tight labels (road-signs: no-aug 0.66 vs aug
+   0.30); when unsure, train both `--augment` and `--no-augment` and compare. The
+   val split must be **grouped by image** so a repeated image can't leak across
+   train/val:
    ```bash
    uv run --extra train python -m workflows.train_rfdetr \
      --source <judged_output>-trainready --val-split <held-out> \
-     --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 \
+     --model Roboflow/rf-detr-large --epochs 20 --batch-size 8 [--no-augment] \
      --hub-model-id <model_output> --output-dir checkpoints/<name>
    ```
    Optionally evaluate against a held-out human-GT split (if the source dataset
@@ -123,8 +127,8 @@ dataset/model/class set silently — if something is unavailable, say so and sto
 ## HF Jobs flavor allocation (match the bottleneck, not the stage)
 - **Large judge** (~8B VLM over thousands of images — the long pole) → `l40sx1`.
 - **Small judge** (≤2B, e.g. LFM-1.6B) → `l4x1`.
-- **RF-DETR training** on a small curated set (~1–2K images, ~10 epochs) is light
-  and single-GPU → `l4x1`; use `l40sx1`/multi-GPU only for large data / long runs.
+- **RF-DETR training** (default rf-detr-large, ~20 epochs) on a small curated set
+  → `l4x1` works; bump to `l40sx1` for 30+ epochs / long runs.
 - **CPU stages** (router labelling, merge) → `cpu-upgrade`.
 - Net: the big GPU goes to the *large judge*, not to training.
 

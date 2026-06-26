@@ -28,7 +28,7 @@ table,image,chart,diagram,figure
 | Labeller | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | HF Inference Providers (router), CPU job |
 | Judge A | `google/gemma-4-E4B-it` | Google | 8.0B | `l4x1` GPU job |
 | Judge B | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` GPU job |
-| Train | `Roboflow/rf-detr-base` | — | — | `l40sx1` GPU job |
+| Train | `Roboflow/rf-detr-large` | — | — | `l40sx1` GPU job |
 
 Why this wiring: the labeller is the largest worker and the two judges are from
 different families (uncorrelated errors). Qwen's prompt-based `bbox_2d` (0–1000)

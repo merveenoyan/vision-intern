@@ -15,7 +15,12 @@ works with any of three input formats:
   (and optional ``val/``).
 
 Any ``AutoModelForObjectDetection`` checkpoint works; the default is
-``Roboflow/rf-detr-base``.
+``Roboflow/rf-detr-large``.
+
+Augmentation is **use-case dependent** — ``augment=True`` by default, but pass
+``--no-augment`` when the data doesn't benefit (clean/uniform imagery or already
+tight labels often train better without it). Assess per dataset; when unsure,
+run both and compare mAP.
 
 Examples
 --------
@@ -23,7 +28,7 @@ Hub::
 
     python -m workflows.train_rfdetr \\
         --source username/my-dataset-judged --val-split test \\
-        --epochs 10 --output-dir checkpoints/my-detector
+        --epochs 20 --output-dir checkpoints/my-detector
 
 Local COCO::
 
@@ -42,7 +47,7 @@ from typing import Any
 import numpy as np
 import torch
 
-DEFAULT_MODEL = "Roboflow/rf-detr-medium"
+DEFAULT_MODEL = "Roboflow/rf-detr-large"
 
 
 def _is_local_dir(source: str | Path) -> bool:
@@ -432,7 +437,7 @@ def train(
     source: str | Path,
     output_dir: str | Path = "checkpoints/rfdetr-finetuned",
     model_id: str = DEFAULT_MODEL,
-    epochs: int = 10,
+    epochs: int = 20,
     batch_size: int = 8,
     lr: float = 5e-5,
     weight_decay: float = 1e-4,
@@ -592,7 +597,7 @@ def _cli() -> None:
                         help="Local COCO dir or HF dataset ID")
     parser.add_argument("--output-dir", default="checkpoints/rfdetr-finetuned")
     parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--weight-decay", type=float, default=1e-4)

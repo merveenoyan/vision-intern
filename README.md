@@ -116,10 +116,10 @@ from workflows import train
 
 train(
     source="username/my-dataset-judged",  # or a local COCO directory
-    model_id="Roboflow/rf-detr-base",
-    epochs=10,
+    model_id="Roboflow/rf-detr-large",
+    epochs=20,
     batch_size=8,
-    augment=True,          # Albumentations (no-op if not installed)
+    augment=True,          # use-case dependent — see note below; off via augment=False
     val_split="test",      # held-out split for mAP/mAR; None to skip eval
     push_to_hub=True,
     hub_model_id="username/my-detector",
@@ -136,8 +136,13 @@ Supported input formats (auto-detected):
   (and optional `val/`).
 
 Any `AutoModelForObjectDetection` checkpoint works (RF-DETR, DETR, etc.); the
-default is `Roboflow/rf-detr-base`. RF-DETR requires `transformers>=5.10` and
+default is `Roboflow/rf-detr-large`. RF-DETR requires `transformers>=5.10` and
 `timm`.
+
+**Augmentation is use-case dependent.** It defaults on (`augment=True`), but for
+clean/uniform imagery or already-tight labels it can *hurt* — e.g. road-signs
+trained markedly better with `--no-augment`. Assess per dataset; when unsure,
+train both ways and compare mAP.
 
 ## Using it as an agent toolkit
 
@@ -276,7 +281,7 @@ python -m workflows.vlm_judge \
 # Train (mAP/mAR eval on a held-out split, push to the Hub)
 python -m workflows.train_rfdetr \
     --source username/my-dataset-judged --val-split test \
-    --model Roboflow/rf-detr-base --epochs 10 --batch-size 8 \
+    --model Roboflow/rf-detr-large --epochs 20 --batch-size 8 \
     --output-dir checkpoints/my-detector
 ```
 
@@ -344,7 +349,7 @@ judge_labels(
 # Step 3: train
 train(
     source="username/my-dataset-judged",
-    epochs=10,
+    epochs=20,
     batch_size=4,
 )
 ```
