@@ -41,7 +41,7 @@ Keep the *generic* mechanics in `README.md` / `jobs/README.md`; put only the
 | Use case | Goal | Status |
 |---|---|---|
 | [`docvqa-media`](docvqa-media/) | Detect media regions (table/image/chart/…) in scanned document pages | done |
-| [`roadsign-detection`](roadsign-detection/) | Detect 21 road-sign / traffic-light classes; labelling done, judge → train | ready |
+| [`roadsign-detection`](roadsign-detection/) | Detect 21 road-sign / traffic-light classes; judge → train (best mAP 0.685) | done |
 
 Some use cases are run by the [`vision-e2e-runner`](../.claude/agents/vision-e2e-runner.md)
 subagent, which executes the pipeline autonomously except for the one human gate:

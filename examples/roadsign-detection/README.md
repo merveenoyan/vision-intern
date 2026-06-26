@@ -42,37 +42,62 @@ The **only human-approval gate** is the judge descriptions. Generate them as a
 separate step, review, then judge with the approved file (it is used verbatim —
 no regeneration):
 
+The descriptions are the only human gate; everything after runs unattended.
+Stages 2–4 emit **both** ensemble policies (`agree1` recall, `agree2` precision)
+as separate repos — see [emit-both-agree convention](../../agents.md).
+
 ```bash
 # 1 — generate judge descriptions  → review/edit descriptions.json  ← HUMAN GATE
 uv run python -m workflows.gen_descriptions \
   --source merve/roadsign-labeled-qwen --drop road-signs \
   --backend openai --base-url https://router.huggingface.co/v1 \
-  --model Qwen/Qwen3.5-9B --output descriptions.json
+  --model Qwen/Qwen3.5-9B --output descriptions.json   # the approved file lives in this folder
 
-# 2 — judge with the approved descriptions (ensemble, both must agree)
-uv run python -m workflows.vlm_judge \
-  --source merve/roadsign-labeled-qwen \
-  --output merve/roadsign-judged-ensemble --push-to-hub \
-  --judges "google/gemma-4-E4B-it,LiquidAI/LFM2.5-VL-1.6B" \
-  --backend openai --base-url https://router.huggingface.co/v1 \
-  --class-descriptions descriptions.json --min-agree 2 --split train
+# 2 — judge into BOTH policies (each pushes with a bbox-overlay gallery)
+for AG in 1 2; do
+  uv run python -m workflows.vlm_judge --source merve/roadsign-labeled-qwen \
+    --output merve/roadsign-judged-ensemble-agree$AG --push-to-hub \
+    --judges "google/gemma-4-E4B-it,LiquidAI/LFM2.5-VL-1.6B" \
+    --backend openai --base-url https://router.huggingface.co/v1 \
+    --class-descriptions descriptions.json --min-agree $AG --split train
+done
 
-# 3 — strip the human-GT objects column (it shadows our detections in training)
-HF_TOKEN=$(hf auth token) python3 jobs/strip_objects.py \
-  merve/roadsign-judged-ensemble merve/roadsign-judged-ensemble-trainready
+# 3 — strip the human-GT objects column (it shadows our detections) from each
+for AG in 1 2; do
+  HF_TOKEN=$(hf auth token) python3 jobs/strip_objects.py \
+    merve/roadsign-judged-ensemble-agree$AG merve/roadsign-judged-ensemble-agree$AG-trainready
+done
 
-# 4 — train RF-DETR (val split grouped by image to avoid leakage).
-# This dataset trains markedly better WITHOUT augmentation (--no-augment).
-uv run --extra train python -m workflows.train_rfdetr \
-  --source merve/roadsign-judged-ensemble-trainready --val-split test \
-  --model Roboflow/rf-detr-large --epochs 20 --batch-size 8 --no-augment \
-  --hub-model-id merve/rfdetr-roadsign --output-dir checkpoints/rfdetr-roadsign
+# 4 — train RF-DETR on each. This data trains far better with --no-augment.
+for AG in 1 2; do
+  uv run --extra train python -m workflows.train_rfdetr \
+    --source merve/roadsign-judged-ensemble-agree$AG-trainready --val-split test \
+    --model Roboflow/rf-detr-large --epochs 30 --batch-size 8 --no-augment \
+    --hub-model-id merve/rfdetr-roadsign-agree$AG-large-noaug
+done
 ```
 
 ## Outputs
-- Labeled:  `merve/roadsign-labeled-qwen` (done)
-- Judged:   `merve/roadsign-judged-ensemble`
-- Model:    `merve/rfdetr-roadsign`
+- **Labeled:** `merve/roadsign-labeled-qwen`
+- **Judged:** `merve/roadsign-judged-ensemble-agree1` / `-agree2` (+ `…-trainready`)
+  — each with an auto bbox-overlay gallery on its dataset page
+- **Models:** `merve/rfdetr-roadsign-agree1-large-noaug` (best) /
+  `-agree2-large-noaug`
+
+## Results
+mAP on the held-out split, vs the **VLM-judged** labels (not human GT — run
+`jobs/eval_vs_gt.py` against `Francesco/road-signs-6ih4y` test for the true number):
+
+| config | agree1 mAP | agree1 mAP@50 | agree2 mAP |
+|---|---|---|---|
+| **rf-detr-large, 30 ep, no-aug** | **0.685** | 0.772 | 0.623 |
+| rf-detr-base, 10 ep, +aug (baseline) | 0.298 | 0.335 | 0.282 |
+
+The 0.30 → 0.68 jump came entirely from three hparams: **base→large, 10→30 epochs,
+augmentation off** (lr/batch/cosine schedule were already matched). `agree1`
+(higher recall) beat `agree2` here. Strong classes: `do_not_enter` 0.93,
+`ped_crossing` 0.87, `stop` 0.82; weakest `yellow_light` 0.18 (amber-vs-red, the
+case the judges also flagged).
 
 ## Notes / gotchas
 - **`gen_descriptions` is the only approval gate.** `judge_labels` regenerates
@@ -80,11 +105,9 @@ uv run --extra train python -m workflows.train_rfdetr \
   pins the human-approved text for the whole run.
 - **Strip `objects` before training** — the RF-DETR trainer prioritizes a human
   `objects` column over our VLM `detections`, and non-0-based ids crash it.
-- **Augmentation hurts here — train with `--no-augment`.** On this dataset
-  `rf-detr-large` + 30 epochs + no-aug reached **mAP ≈ 0.66 / mAP@50 ≈ 0.77**,
-  vs ≈ 0.30 for `rf-detr-base` + 10 epochs + augmentation. The clean, centered
-  sign crops don't benefit from heavy augmentation. (Augmentation is use-case
-  dependent — assess per dataset.)
+- **Augmentation hurts here — train with `--no-augment`.** The clean, centered
+  sign crops don't benefit from heavy augmentation (see Results: 0.685 no-aug vs
+  0.30 with aug). Augmentation is use-case dependent — assess per dataset.
 - **VLM labels do contain errors** worth catching (e.g. a `yellow_light` sign
   labelled `red_light`, a `red_light` labelled `traffic_light`) — the point of
   the judge pass.
