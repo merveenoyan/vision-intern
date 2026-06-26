@@ -144,6 +144,13 @@ that HF Jobs will clone.
 - **Smoke-test small, then scale.** Run any new stage with `--max-samples 20`
   first; confirm it SUCCEEDED before launching the full run. On HF Jobs, submit
   **one** job, verify, then fan out the rest.
+- **Pick the Jobs flavor by the compute bottleneck, not the stage name.** The
+  heavy step is **judging with the larger VLM** (an ~8B judge over thousands of
+  images is the long pole) → give it `l40sx1`. A **small judge** (≤2B) runs on
+  `l4x1`. **RF-DETR training on a small curated set** (~1–2K images, ~10 epochs)
+  is light + single-GPU → `l4x1` is plenty; reserve `l40sx1`/multi-GPU for large
+  data or long schedules. CPU stages (router labelling, merge) → `cpu-upgrade`.
+  So the big GPU usually goes to the *large judge*, not to training.
 - **Never lose artifacts.** Training always sets `push_to_hub=True` + an explicit
   `hub_model_id`. Give Jobs a generous `--timeout` (a long final push can run
   past the default and get flagged ERROR *after* the data uploaded fine).

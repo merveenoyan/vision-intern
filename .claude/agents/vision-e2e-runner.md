@@ -110,6 +110,14 @@ artifacts produced (judged dataset URL, model URL, mAP/mAR if eval ran), and
 anything that needs the caller's attention. Never substitute a different
 dataset/model/class set silently — if something is unavailable, say so and stop.
 
+## HF Jobs flavor allocation (match the bottleneck, not the stage)
+- **Large judge** (~8B VLM over thousands of images — the long pole) → `l40sx1`.
+- **Small judge** (≤2B, e.g. LFM-1.6B) → `l4x1`.
+- **RF-DETR training** on a small curated set (~1–2K images, ~10 epochs) is light
+  and single-GPU → `l4x1`; use `l40sx1`/multi-GPU only for large data / long runs.
+- **CPU stages** (router labelling, merge) → `cpu-upgrade`.
+- Net: the big GPU goes to the *large judge*, not to training.
+
 ## Discipline (from agents.md)
 - Smoke-test small, then scale; verify SUCCEEDED before the full run.
 - Always `push_to_hub` with an explicit id; give long-running steps a generous

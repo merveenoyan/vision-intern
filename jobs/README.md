@@ -7,10 +7,19 @@ judges):
 | Stage | Script | Model | Family | Size | Flavor |
 |---|---|---|---|---|---|
 | 1 Label | `label_qwen.py` | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | `cpu-upgrade`¹ |
-| 2 Judge A | `judge_one.py` | `google/gemma-4-E4B-it` | Google | 8.0B | `l4x1` |
-| 2 Judge B | `judge_one.py` | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` |
+| 2 Judge A | `judge_one.py` | `google/gemma-4-E4B-it` | Google | 8.0B | `l40sx1`² |
+| 2 Judge B | `judge_one.py` | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1`² |
 | 3 Merge | `merge_judges.py` | — (ensemble) | — | — | `cpu-upgrade` |
-| 4 Train | `train_rfdetr_job.py` | `Roboflow/rf-detr-base` | — | — | `l40sx1` |
+| 4 Train | `train_rfdetr_job.py` | `Roboflow/rf-detr-base` | — | — | `l4x1`² |
+
+> **² Pick the flavor by the compute bottleneck, not the stage name.** The
+> heavy step is **judging with the larger VLM** (an 8B judge over ~1.4K images is
+> the long pole) — give *that* the big GPU (`l40sx1`). A **small judge**
+> (≤2B, e.g. LFM-1.6B) runs fine on `l4x1`. **RF-DETR training on a small
+> curated set** (~1–2K images, ~10 epochs) is light and single-GPU — `l4x1` is
+> plenty; reserve `l40sx1`/multi-GPU for large datasets or long schedules. So in
+> practice the big GPU goes to the *large judge*, not to training. CPU stages
+> (router labelling, merge) stay on `cpu-upgrade`.
 
 ¹ Qwen3.5-9B has live HF Inference Providers, so `label_qwen.py` labels through
 the HF router (`openai` backend) on a CPU job — no GPU load. It uses the
@@ -96,10 +105,11 @@ DIR=/data/docvqa-qwen
 hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN --timeout 3h $REF -d \
   jobs/label_qwen.py -- --output merve/docvqa-media-labeled-qwen --dedupe
 
-# 2 — judges (after stage 1 SUCCEEDED; run both in parallel)
-# NB: --timeout 3h — gemma-8B over 1000 rows on l4x1 runs past the default job
+# 2 — judges (after stage 1 SUCCEEDED; run both in parallel). The LARGE judge is
+# the long pole, so it gets l40sx1; the small judge runs on l4x1 (see flavor note
+# above). --timeout 3h: the 8B judge over ~1.4K rows runs past the default job
 # timeout; without it the job is killed AFTER writing verdicts and flagged ERROR.
-hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
+hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
   jobs/judge_one.py -- --model google/gemma-4-E4B-it \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_gemma.parquet
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
@@ -114,10 +124,12 @@ hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
   --min-agree 2 --max-area-frac 0.9
 
-# 4 — train RF-DETR (after merge SUCCEEDED). The val split is grouped by image
+# 4 — train RF-DETR (after merge SUCCEEDED). Small curated set + ~10 epochs is
+# light and single-GPU, so l4x1 suffices (bump to l40sx1 only for large data /
+# long schedules). The val split is grouped by image
 # (tools.dataset_utils.grouped_train_val_split), so repeated images can't leak
 # across train/val — no need to pre-split.
-hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN $REF --timeout 6h -d \
+hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $REF --timeout 6h -d \
   jobs/train_rfdetr_job.py -- --epochs 10 --batch-size 8 \
   --source merve/docvqa-media-judged-ensemble \
   --hub-model-id merve/rfdetr-docvqa-qwen

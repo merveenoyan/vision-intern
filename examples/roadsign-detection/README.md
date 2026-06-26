@@ -33,9 +33,9 @@ t_intersection_l, traffic_light, u_turn, warning, yellow_light
 |---|---|---|---|---|
 | Orchestrator | the driving agent | — | — | issues calls, never labels/judges |
 | Labeller | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | HF router (already run) |
-| Judge A | `google/gemma-4-E4B-it` | Google | 8.0B | HF router / `l4x1` |
-| Judge B | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | HF router / `l4x1` |
-| Train | `Roboflow/rf-detr-base` | — | — | local GPU / `l40sx1` |
+| Judge A | `google/gemma-4-E4B-it` | Google | 8.0B | `l40sx1` (the heavy judge — the long pole) |
+| Judge B | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` (small judge) |
+| Train | `Roboflow/rf-detr-base` | — | — | `l4x1` (small set, ~10 epochs — light) |
 
 ## Commands
 The **only human-approval gate** is the judge descriptions. Generate them as a
