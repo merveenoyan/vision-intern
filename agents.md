@@ -136,6 +136,11 @@ The unit suite includes a **job-script guard** that compile-checks every
 that HF Jobs will clone.
 
 ## Operating discipline (conventions)
+- **Be decisive — act over ask.** Pick the sensible default, state the assumption
+  in one line, and proceed. Ask the human only when genuinely blocked, the action
+  is destructive/irreversible/outward-facing (force-push, delete, paid fan-out),
+  or a wrong guess wastes real time or money — and batch unavoidable questions
+  into one. Don't survey options for paths you won't take.
 - **Check `examples/` first.** Before building a pipeline for a new domain, read
   the closest use case in `examples/`; when a run is worth keeping, write it up
   there (copy `examples/_template/`) and add it to the index.
