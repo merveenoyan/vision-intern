@@ -44,6 +44,13 @@ Datasets / artifacts (separate from the originals):
 box-overlay gallery (`viz/` + README), so boxes never need re-rendering.
 
 ### How judging works (and its limits)
+The judge models (`google/gemma-4-E4B-it`, `LiquidAI/LFM2.5-VL-1.6B`) are small
+and **have no HF Inference Provider**, so the judge job loads them locally with
+the `transformers` backend on the GPU and runs **batched** inference
+(`--batch-size` images per `generate()` call — `run_vlm_batch` /
+`score_detections_batch`). This is why judging is a GPU job, not a router call
+like labelling.
+
 The labeller stores a `detections_overlay` column — each proposed box drawn and
 **numbered** (`#0`, `#1`, …) on the image. Judges score that overlay directly,
 evaluating each numbered box by *looking at it*, instead of being handed raw
@@ -105,15 +112,18 @@ DIR=/data/docvqa-qwen
 hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN --timeout 3h $REF -d \
   jobs/label_qwen.py -- --output merve/docvqa-media-labeled-qwen --dedupe
 
-# 2 — judges (after stage 1 SUCCEEDED; run both in parallel). The LARGE judge is
-# the long pole, so it gets l40sx1; the small judge runs on l4x1 (see flavor note
-# above). --timeout 3h: the 8B judge over ~1.4K rows runs past the default job
-# timeout; without it the job is killed AFTER writing verdicts and flagged ERROR.
+# 2 — judges (after stage 1 SUCCEEDED; run both in parallel). These judges are
+# NOT on HF Inference Providers, so they run LOCALLY on the job's GPU with the
+# transformers backend, BATCHED (--batch-size, many images per generate() call).
+# The LARGE judge is the long pole, so it gets l40sx1; the small judge runs on
+# l4x1 (see flavor note above). --timeout 3h: the 8B judge over ~1.4K rows runs
+# past the default job timeout; without it the job is killed AFTER writing
+# verdicts and flagged ERROR. Lower --batch-size if a judge OOMs.
 hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
-  jobs/judge_one.py -- --model google/gemma-4-E4B-it \
+  jobs/judge_one.py -- --model google/gemma-4-E4B-it --batch-size 8 \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_gemma.parquet
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
-  jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
+  jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B --batch-size 16 \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_lfm.parquet
 
 # 3 — merge (after both judges SUCCEEDED). ALWAYS emit BOTH ensemble policies as

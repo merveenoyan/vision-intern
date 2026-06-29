@@ -130,44 +130,61 @@ def _run_openai(
 # Transformers backend
 # ------------------------------------------------------------------
 
-def _run_transformers(
-    image: Image.Image,
-    prompt: str,
+def _load_vlm(model_id: str) -> tuple[Any, Any]:
+    import torch
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
+    model = AutoModelForImageTextToText.from_pretrained(
+        model_id,
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+    )
+    model.eval()
+    return model, processor
+
+
+def _run_transformers_batch(
+    images: list[Image.Image],
+    prompts: list[str],
     model_id: str,
     max_tokens: int,
-) -> str:
+) -> list[str]:
+    """Generate for a *batch* of (image, prompt) pairs in one forward pass.
+
+    This is the throughput path for the GPU judge jobs: the small judge models
+    (e.g. ``LiquidAI/LFM2.5-VL-1.6B``, ``google/gemma-4-E4B-it``) are not on HF
+    Inference Providers, so they run locally with ``transformers`` — feeding one
+    image at a time wastes the GPU.
+
+    Uses the standard multimodal batching path: a list of conversations (image
+    embedded per turn) through ``apply_chat_template`` with ``padding=True`` and
+    ``padding_side="left"`` (left padding is what decoder-only ``generate`` wants,
+    so every row's new tokens start at the same offset and one slice serves the
+    whole batch).
+    """
     import torch
 
     from .utils import get_or_load
 
-    def _load() -> tuple[Any, Any]:
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+    model, processor = get_or_load(f"vlm:{model_id}", lambda: _load_vlm(model_id))
 
-        processor = AutoProcessor.from_pretrained(
-            model_id, trust_remote_code=True,
-        )
-        model = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            device_map="auto",
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-        )
-        model.eval()
-        return model, processor
-
-    model, processor = get_or_load(f"vlm:{model_id}", _load)
-
-    messages = [
-        {"role": "user", "content": [
-            {"type": "image"},
+    conversations = [
+        [{"role": "user", "content": [
+            {"type": "image", "image": img},
             {"type": "text", "text": prompt},
-        ]},
+        ]}]
+        for img, prompt in zip(images, prompts)
     ]
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True,
-    )
-    inputs = processor(
-        text=[text], images=[image], return_tensors="pt", padding=True,
+    inputs = processor.apply_chat_template(
+        conversations,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+        padding=True,
+        padding_side="left",
     ).to(model.device)
 
     with torch.inference_mode():
@@ -175,9 +192,17 @@ def _run_transformers(
             **inputs, max_new_tokens=max_tokens, do_sample=False,
         )
 
-    return processor.decode(
-        out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True,
-    )
+    gen = out[:, inputs["input_ids"].shape[1]:]
+    return processor.batch_decode(gen, skip_special_tokens=True)
+
+
+def _run_transformers(
+    image: Image.Image,
+    prompt: str,
+    model_id: str,
+    max_tokens: int,
+) -> str:
+    return _run_transformers_batch([image], [prompt], model_id, max_tokens)[0]
 
 
 # ------------------------------------------------------------------
@@ -228,6 +253,43 @@ def run_vlm(
         return _run_openai(image, prompt, model_id, base_url, api_key, max_tokens)
     if backend == "transformers":
         return _run_transformers(image, prompt, model_id, max_tokens)
+    raise ValueError(
+        f"Unknown backend {backend!r}. Use 'openai' or 'transformers'."
+    )
+
+
+def run_vlm_batch(
+    images: list[Image.Image],
+    prompts: list[str],
+    model_id: str,
+    backend: str = "transformers",
+    base_url: str | None = None,
+    api_key: str | None = None,
+    max_tokens: int = 4096,
+) -> list[str]:
+    """Run a VLM over a *batch* of (image, prompt) pairs; one response each.
+
+    The ``transformers`` backend runs the whole batch through a single
+    ``generate`` call (the throughput path for the GPU judge jobs). The
+    ``openai`` backend has no batched chat endpoint, so it falls back to
+    sequential per-item calls — same results, just not faster.
+
+    *images* and *prompts* must be the same length; the returned list is aligned
+    with them.
+    """
+    if len(images) != len(prompts):
+        raise ValueError(
+            f"images ({len(images)}) and prompts ({len(prompts)}) must match",
+        )
+    if not images:
+        return []
+    if backend == "transformers":
+        return _run_transformers_batch(images, prompts, model_id, max_tokens)
+    if backend == "openai":
+        return [
+            _run_openai(img, prompt, model_id, base_url, api_key, max_tokens)
+            for img, prompt in zip(images, prompts)
+        ]
     raise ValueError(
         f"Unknown backend {backend!r}. Use 'openai' or 'transformers'."
     )

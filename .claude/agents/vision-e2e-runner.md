@@ -37,12 +37,20 @@ descriptions.
 - `judged_output` — Hub id for the judged dataset.
 - `model_output` — Hub id for the trained model.
 - `descriptions_file` — where the approved `{label: definition}` JSON lives (default `descriptions.json`).
-- Labeller/judge endpoints. A reasonable default ensemble (toolkit recommendation,
-  not use-case-specific): labeller `Qwen/Qwen3.5-9B` via the HF router
-  (`--backend openai --base-url https://router.huggingface.co/v1`); judges
-  `google/gemma-4-E4B-it` + `LiquidAI/LFM2.5-VL-1.6B` (different families, both
-  smaller than the labeller). Confirm endpoints/models are reachable before a
-  full run; ask the caller if none are.
+- Labeller/judge models. The recommended default ensemble (toolkit
+  recommendation, not use-case-specific):
+  - **Labeller** `Qwen/Qwen3.5-9B` — *is* on HF Inference Providers, so it labels
+    through the HF router (`--backend openai --base-url https://router.huggingface.co/v1`),
+    no GPU. This is the only stage that uses the router.
+  - **Judges** `google/gemma-4-E4B-it` + `LiquidAI/LFM2.5-VL-1.6B` (different
+    families, both smaller than the labeller). These are **small models with no
+    HF Inference Provider**, so they do **not** run through the router — they run
+    **on HF Jobs with the `transformers` backend on a GPU, batched**
+    (`jobs/judge_one.py`, `--batch-size`). Do not try to judge via
+    `--backend openai`; for these models it fails ("not a chat model" /
+    "not supported by any provider you have enabled"). The router only works for
+    judges if the caller explicitly names a judge that has live Inference
+    Providers.
 
 If a `labeled_dataset` is given, labelling is already done — **skip the label
 stage**; only run `vlm_label` if asked to label from scratch.
@@ -73,35 +81,50 @@ use-case specifics live there, never in this prompt or the general repo.
 Re-read the approved `<descriptions_file>` and verify every label has a
 non-empty definition (if not, drop back to Phase 1 and say so).
 
-1. **Smoke-test small first.** Run the judge with `--max-samples 20` and confirm
-   it succeeds before the full run. (The toolkit convention: smoke, verify,
-   scale.)
-2. **Judge** with the approved descriptions — the judge uses them verbatim and
-   does **not** regenerate:
-   **Always emit BOTH ensemble policies as separate repos** — run the judge/merge
-   twice: `<judged_output>-agree1` (`--min-agree 1`, higher recall) and
+1. **Push the branch first.** The Jobs scripts clone this repo (`REPO_REF`) for
+   the shared `tools/`+`workflows/` (including the batched judge code), so
+   `git push` the working branch and pass `-e REPO_REF=<branch>` to every job.
+2. **Judge on HF Jobs (GPU, batched) — not the router.** The default judges
+   aren't on HF Inference Providers, so each runs as a GPU job with the
+   `transformers` backend, batched (`jobs/judge_one.py --batch-size`). Run the
+   two judges as separate jobs sharing the run bucket, then merge. **Smoke-test
+   with `--max-samples 20` and confirm SUCCEEDED before the full run.** The judge
+   uses the approved descriptions verbatim and does **not** regenerate.
+   ```bash
+   BUCKET="-v hf://buckets/merve/vision-agent-runs:/data"
+   REF="-e REPO_REF=<branch>"; DIR=/data/<run-name>
+   # Large judge → big GPU (the long pole); small judge → l4x1. Both batched.
+   hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
+     jobs/judge_one.py -- --model google/gemma-4-E4B-it \
+     --dataset <labeled_dataset> --split train --batch-size 8 \
+     --class-descriptions <descriptions_file> --out $DIR/verdicts_gemma.parquet
+   hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
+     jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
+     --dataset <labeled_dataset> --split train --batch-size 16 \
+     --class-descriptions <descriptions_file> --out $DIR/verdicts_lfm.parquet
+   ```
+3. **Merge into BOTH ensemble policies as separate repos** (after both judges
+   SUCCEEDED) — `<judged_output>-agree1` (`--min-agree 1`, higher recall) and
    `<judged_output>-agree2` (`--min-agree 2`, higher precision). Both ship a
-   box-overlay gallery automatically (`push_dataset_with_viz`). On the Jobs path
-   this is two `merge_judges.py` runs over the same verdicts.
+   box-overlay gallery automatically (`push_dataset_with_viz`); the page-spanning
+   area guard (`--max-area-frac`) lives here. Same verdicts, two cheap CPU merges.
    ```bash
    for AG in 1 2; do
-     uv run python -m workflows.vlm_judge \
-       --source <labeled_dataset> --output <judged_output>-agree$AG --push-to-hub \
-       --judges "google/gemma-4-E4B-it,LiquidAI/LFM2.5-VL-1.6B" \
-       --backend openai --base-url https://router.huggingface.co/v1 \
-       --class-descriptions <descriptions_file> \
-       --min-agree $AG --threshold 0.0 --split train
+     hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
+       jobs/merge_judges.py -- --dataset <labeled_dataset> --split train \
+       --output <judged_output>-agree$AG \
+       --verdicts "google/gemma-4-E4B-it::$DIR/verdicts_gemma.parquet" \
+       --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
+       --min-agree $AG --max-area-frac 0.9
    done
    ```
-   (A page-spanning area guard lives in the Jobs `merge_judges.py`; in-process,
-   gate with `min-agree`.)
-3. **Strip the human-GT `objects` column before training.** This labeled
+4. **Strip the human-GT `objects` column before training.** This labeled
    dataset carries an `objects` ClassLabel column (the original human GT); the
    RF-DETR trainer prioritizes `objects` over our VLM `detections`, so training
    would silently learn the GT instead — and crashes on non-0-based ids. Drop
    `objects` (and the heavy `detections_overlay`) into a new repo, e.g. with
    `jobs/strip_objects.py <judged_output> <judged_output>-trainready`.
-4. **Train** RF-DETR (default `Roboflow/rf-detr-large`, ~20 epochs) on the
+5. **Train** RF-DETR (default `Roboflow/rf-detr-large`, ~20 epochs) on the
    train-ready dataset, always pushing with an explicit id, with a generous
    timeout. **Assess augmentation for the use case** — it defaults on but often
    hurts clean/uniform imagery or tight labels (road-signs: no-aug 0.66 vs aug

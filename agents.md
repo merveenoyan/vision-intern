@@ -91,16 +91,21 @@ cards' detection-prompt differences.
   requested classes; stores a numbered `detections_overlay` image per row for
   the judges to look at.
 - `workflows/vlm_judge.py` — `judge_labels()` and the ensemble helpers
-  (`score_detections`, `ensemble_row`, `generate_object_specs`). Judges score the
-  *numbered overlay* (VLMs reason about drawn boxes far better than raw pixel
-  coords). `threshold` gates by judge score; `0.0` keeps everything and just
-  records `judge_verdicts`.
+  (`score_detections`, `score_detections_batch`, `ensemble_row`,
+  `generate_object_specs`). Judges score the *numbered overlay* (VLMs reason
+  about drawn boxes far better than raw pixel coords). `threshold` gates by judge
+  score; `0.0` keeps everything and just records `judge_verdicts`.
+  `score_detections_batch` is the GPU throughput path used by the Jobs judge —
+  small judges with no Inference Provider run locally via `transformers`, batched.
 - `workflows/train_rfdetr.py` — `train()`. Generalized from the HF
   object-detection tutorial: lazy `with_transform`, optional Albumentations
   augmentation, COCO mAP/mAR via `torchmetrics`, `push_to_hub`, `trackio`.
   **Auto-detects 3 input formats**: HF `objects` column, pipeline `detections`
   column (xyxy→xywh), and a local COCO directory.
-- `tools/vlm_client.py` — `run_vlm()` (image resize→1280px + JPEG, retry w/ backoff).
+- `tools/vlm_client.py` — `run_vlm()` (image resize→1280px + JPEG, retry w/
+  backoff) and `run_vlm_batch()` (transformers backend: a whole batch through one
+  `generate()` via `apply_chat_template` + left padding — for provider-less judges
+  on GPU; the `openai` backend has no batch endpoint, so it falls back to sequential).
 - `tools/vlm_detect.py` — VLM detection + bbox parsing.
 - `tools/bbox_utils.py`, `tools/dataset_utils.py` — CPU-only, no model load.
 - `tools/hub_viz.py` — `push_dataset_with_viz()`: every dataset push includes an
@@ -114,7 +119,10 @@ uv run python -m workflows.vlm_label  --source <hf-dataset-or-dir> \
   --classes "a,b,c" --output <out> [--push-to-hub] --backend openai \
   --base-url <url> --api-key <key> --model <labeller-model>
 
-# Judge (small judge endpoint; run several and merge for an ensemble)
+# Judge (run several and merge for an ensemble). Use --backend openai only for a
+# judge that has live HF Inference Providers; small provider-less judges (the
+# default gemma + LFM ensemble) run on the GPU via the Jobs path instead
+# (jobs/judge_one.py --batch-size, transformers backend) — see jobs/README.md.
 uv run python -m workflows.vlm_judge  --source <labeled> --output <judged> \
   --backend openai --base-url <url> --api-key <key> --model <judge-model>
 

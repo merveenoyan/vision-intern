@@ -14,24 +14,29 @@
 #   "requests",
 # ]
 # ///
-"""HF Job — STAGE 2: score one judge over the moondream-labelled dataset.
+"""HF Job — STAGE 2: score one judge over the labelled dataset (GPU, batched).
 
-Run once per judge (gemma-4-E4B-it and LFM2.5-VL-1.6B). Each writes its
-per-detection verdicts to the run bucket; :mod:`jobs.merge_judges` combines them
-into the ensemble ``judge_verdicts``. Two separate jobs sharing the bucket is
-the intended multi-read/write pattern.
+Run once per judge (gemma-4-E4B-it and LFM2.5-VL-1.6B). These judges are small
+and **not served by HF Inference Providers**, so they run **locally with the
+``transformers`` backend on the job's GPU** — not through the router. Inference
+is **batched** (``--batch-size``, many images per ``generate`` call) so the GPU
+is not starved one image at a time.
 
-    # judge A (Google, ~8B)
-    hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+Each writes its per-detection verdicts to the run bucket; :mod:`jobs.merge_judges`
+combines them into the ensemble ``judge_verdicts``. Two separate jobs sharing the
+bucket is the intended multi-read/write pattern.
+
+    # judge A (Google, ~8B) — the long pole, so it gets the big GPU
+    hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 3h \
       -v hf://buckets/merve/vision-agent-runs:/data -e REPO_REF=multimodel-jobs \
       jobs/judge_one.py -- --model google/gemma-4-E4B-it \
-      --out /data/docvqa-moondream/verdicts_gemma.parquet --max-samples 20
+      --out /data/run/verdicts_gemma.parquet --batch-size 8
 
-    # judge B (Liquid, 1.6B)
-    hf jobs uv run --flavor l4x1 --secrets HF_TOKEN \
+    # judge B (Liquid, 1.6B) — small, fits l4x1
+    hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h \
       -v hf://buckets/merve/vision-agent-runs:/data -e REPO_REF=multimodel-jobs \
       jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
-      --out /data/docvqa-moondream/verdicts_lfm.parquet --max-samples 20
+      --out /data/run/verdicts_lfm.parquet --batch-size 16
 """
 
 from __future__ import annotations
@@ -79,6 +84,11 @@ def main() -> None:
                    help="JSON {label: definition} the human approved (local "
                         "path or hf:// URI). Injected into the judge prompt so "
                         "it evaluates against the agreed definitions.")
+    p.add_argument("--batch-size", type=int, default=8,
+                   help="Images per GPU batch. These judges are not on HF "
+                        "Inference Providers, so they run locally with "
+                        "transformers — batching many images per generate() "
+                        "call is the throughput lever. Lower it if you OOM.")
     p.add_argument("--max-samples", type=int, default=None)
     args = p.parse_args()
 
@@ -88,7 +98,7 @@ def main() -> None:
     from PIL import Image
 
     from tools.utils import load_image
-    from workflows.vlm_judge import score_detections
+    from workflows.vlm_judge import score_detections_batch
 
     # Load the human-approved category definitions (local or hf://).
     class_descriptions = None
@@ -106,27 +116,29 @@ def main() -> None:
     ds = load_dataset(args.dataset, split=args.split)
     if args.max_samples:
         ds = ds.select(range(min(args.max_samples, len(ds))))
-    print(f"Judging {len(ds)} rows with {args.model}")
+    print(f"Judging {len(ds)} rows with {args.model} "
+          f"(batch_size={args.batch_size})")
 
-    rows_out = []
-    for i, row in enumerate(ds):
+    # Assemble (img, detections, overlay) per row, then score in GPU batches.
+    items = []
+    for row in ds:
         dets = row.get(args.detections_column) or []
         if not dets:
-            rows_out.append([])
+            items.append((None, [], None))
             continue
         img = row["image"]
         if not isinstance(img, Image.Image):
             img = load_image(img)
-        overlay = row.get(args.overlay_column)
-        verdicts = score_detections(
-            img, dets, args.model,
-            backend="transformers", base_url=None, api_key=None,
-            overlay_img=overlay,
-            class_descriptions=class_descriptions,
-        )
-        rows_out.append(verdicts)
-        if i % 25 == 0:
-            print(f"  [{i}/{len(ds)}] scored {len(verdicts)} dets")
+        items.append((img, dets, row.get(args.overlay_column)))
+
+    rows_out = score_detections_batch(
+        items, args.model,
+        backend="transformers", base_url=None, api_key=None,
+        class_descriptions=class_descriptions,
+        batch_size=args.batch_size,
+    )
+    print(f"  scored {sum(len(v) for v in rows_out)} detections "
+          f"across {len(rows_out)} rows")
 
     import pandas as pd
     out = run_store.resolve_artifact(

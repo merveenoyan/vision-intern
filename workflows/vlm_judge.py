@@ -29,7 +29,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from tools.utils import load_image
-from tools.vlm_client import run_vlm
+from tools.vlm_client import run_vlm, run_vlm_batch
 
 DEFAULT_VLM = "Qwen/Qwen3.5-9B"
 
@@ -317,11 +317,76 @@ def score_detections(
     except Exception as e:  # noqa: BLE001 — a dead judge must not abort the run
         print(f"\n  [warn] judge {model_id} failed: {e}")
         response = "[]"
-    verdicts = _parse_verdicts(response)
+    return _verdicts_for(detections, response)
+
+
+def _verdicts_for(detections: list[dict], response: str) -> list[dict]:
+    """Map one judge *response* back onto its image's detections."""
+    parsed = _parse_verdicts(response)
     return [
-        {"detection_idx": i, **verdicts.get(i, _NO_VERDICT)}
+        {"detection_idx": i, **parsed.get(i, _NO_VERDICT)}
         for i in range(len(detections))
     ]
+
+
+def score_detections_batch(
+    items: list[tuple],
+    model_id: str,
+    *,
+    backend: str,
+    base_url: str | None,
+    api_key: str | None,
+    class_descriptions: dict[str, str] | None = None,
+    batch_size: int = 8,
+) -> list[list[dict]]:
+    """Run a single judge over many images, batched on the GPU.
+
+    *items* is a list of ``(img, detections, overlay_img)`` tuples — one per
+    image, in order. The judge sees each image's **numbered box-overlay**
+    (the supplied ``overlay_img`` or one rendered on the fly). Images with no
+    detections return ``[]`` without touching the model.
+
+    Returns a list aligned with *items*, each a list of
+    ``{detection_idx, verdict, score, reason}`` (same shape as
+    :func:`score_detections`). This is the throughput path used by the HF Jobs
+    judge so the small judge models run many images per ``generate`` call
+    instead of one at a time.
+    """
+    results: list[list[dict] | None] = [None] * len(items)
+
+    # Collect the images that actually have boxes to score; render overlays.
+    pending: list[tuple[int, Image.Image, list[dict]]] = []
+    for idx, (img, dets, overlay) in enumerate(items):
+        if not dets:
+            results[idx] = []
+            continue
+        if overlay is None:
+            from tools.bbox_viz import draw_detections
+            overlay = draw_detections(img, dets, show_index=True)
+        elif not isinstance(overlay, Image.Image):
+            overlay = load_image(overlay)
+        pending.append((idx, overlay, dets))
+
+    for start in range(0, len(pending), batch_size):
+        chunk = pending[start:start + batch_size]
+        imgs = [overlay for _, overlay, _ in chunk]
+        prompts = [
+            _build_judge_prompt_overlay(dets, class_descriptions)
+            for _, _, dets in chunk
+        ]
+        try:
+            responses = run_vlm_batch(
+                imgs, prompts, model_id,
+                backend=backend, base_url=base_url, api_key=api_key,
+                max_tokens=1024,
+            )
+        except Exception as e:  # noqa: BLE001 — a dead judge must not abort the run
+            print(f"\n  [warn] judge {model_id} batch failed: {e}")
+            responses = ["[]"] * len(chunk)
+        for (idx, _, dets), response in zip(chunk, responses):
+            results[idx] = _verdicts_for(dets, response)
+
+    return [r if r is not None else [] for r in results]
 
 
 def ensemble_row(
