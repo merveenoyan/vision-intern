@@ -7,3 +7,16 @@ __pycache__/
 
 # Model checkpoints
 checkpoints/
+
+# uv / tooling
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# Local visualization artifacts (regenerated on every dataset push)
+viz_output/
+viz_judged/
+viz_test_predictions/
+
+# Stray local images
+cat.jpg

@@ -1,0 +1,23 @@
+{
+  "bus_stop": "a rectangular traffic sign, typically blue with a white bus symbol or the text 'BUS STOP', indicating a designated area for buses to stop",
+  "do_not_enter": "a circular traffic sign with a red border and a white background, featuring a red horizontal bar across the center (often with the text 'DO NOT ENTER' or a left-pointing arrow)",
+  "do_not_stop": "a rectangular traffic sign with a red border and a red circle containing a cross inside, or text indicating that stopping is prohibited",
+  "do_not_turn_l": "a square traffic sign with a white background and a black left-pointing arrow, crossed by a red diagonal slash",
+  "do_not_turn_r": "a square traffic sign with a white background and a black right-pointing arrow, crossed by a red diagonal slash",
+  "do_not_u_turn": "a square traffic sign with a white background and a black U-shaped arrow, crossed by a red diagonal slash",
+  "enter_left_lane": "a rectangular traffic sign, typically white with black text or arrows, instructing drivers to enter the left lane",
+  "green_light": "a traffic signal housing containing a circular light that is illuminated green, indicating permission to proceed",
+  "left_right_lane": "a rectangular traffic sign, typically white with black text or arrows, indicating that the lane allows traffic to go in both left and right directions",
+  "no_parking": "a circular traffic sign with a blue background and a red border, featuring a red 'P' crossed by a red diagonal slash",
+  "parking": "a rectangular traffic sign, typically white with black text or a 'P' symbol, indicating a designated parking area",
+  "ped_crossing": "a rectangular traffic sign, typically white with a black symbol of a pedestrian walking, indicating a pedestrian crossing",
+  "ped_zebra_cross": "a rectangular traffic sign, typically white with a black symbol of a pedestrian walking on zebra stripes, indicating a zebra crossing",
+  "railway_crossing": "a rectangular traffic sign, typically white with a black symbol of a train or a crossbuck (X shape), indicating a railway crossing",
+  "red_light": "a traffic signal housing containing a circular light that is illuminated red, indicating a stop",
+  "stop": "an octagonal traffic sign with a red border and white background, featuring the word 'STOP' in black capital letters",
+  "t_intersection_l": "a square traffic sign with a white background and a black T-shaped symbol with the vertical bar pointing to the left, indicating a T-intersection where the road ends and turns left",
+  "traffic_light": "a vertical pole-mounted housing containing multiple circular lights (red, yellow, green) used to control traffic flow",
+  "u_turn": "a square traffic sign with a white background and a black U-shaped arrow, indicating permission to make a U-turn",
+  "warning": "a diamond-shaped traffic sign with a yellow or orange background and a black symbol, indicating a potential hazard ahead",
+  "yellow_light": "a traffic signal housing containing a circular light that is illuminated yellow or amber, indicating caution or preparation to stop"
+}

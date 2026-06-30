@@ -1,0 +1,86 @@
+[project]
+name = "vision-agent"
+version = "0.1.0"
+description = "A toolkit for VLM-driven detection pipelines: label datasets, judge labels with a VLM-as-judge, and train detection models — designed to be driven by an orchestrating agent."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Light core: the label / judge / merge path. No torch — so a CPU-only merge or
+# a remote-router labelling job installs in seconds. Heavy training deps live in
+# the optional `train` extra below (see tools/__init__.py + workflows/__init__.py,
+# which lazily import torch only when a training symbol is touched).
+dependencies = [
+    "pillow",
+    "numpy",
+    "requests",
+    "tqdm",
+    "datasets",
+    "openai",
+    "huggingface-hub>=0.26",
+]
+
+[project.optional-dependencies]
+# Everything RF-DETR training and local-GPU inference needs.
+train = [
+    "torch>=2.5.0",
+    "torchvision",
+    "transformers>=5.10.0",
+    "timm",
+    "torchmetrics",
+    "albumentations",
+    "accelerate",
+    "pycocotools",
+    "scipy",
+    "einops",
+    "trackio",
+    "qwen-vl-utils",     # ocr(size="medium") dots.mocr vision preprocessing
+]
+# estimate_depth (DA3-LARGE). Kept in its own extra because depth-anything-3
+# hard-pins numpy<2, which is incompatible with the `viz` extra's trackers
+# (numpy>=2). They are declared as conflicting extras below — install one or
+# the other, not both, in a single environment.
+depth = [
+    "depth-anything-3",
+]
+# Roboflow supervision + trackers: bbox visualization and multi-object
+# tracking visualization. No torch — supervision/trackers pull opencv + scipy
+# only, so the annotators run on a CPU-only install. (The `track_video` tool
+# additionally needs a per-frame detector from the `train` extra.)
+viz = [
+    "supervision>=0.26",
+    # 2.5.0's published wheel is an empty stub (no package payload); skip it.
+    "trackers>=2.0,!=2.5.0",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+# `all` is the numpy-flexible base bundle (train + dev). `viz` (trackers,
+# numpy>=2) and `depth` (depth-anything-3, numpy<2) are mutually-exclusive
+# add-ons — pick one and combine with `all` as needed, e.g.
+# `uv sync --extra all --extra viz` or `uv sync --extra all --extra depth`.
+all = ["vision-agent[train,dev]"]
+
+[tool.uv]
+# Flat layout (tools/, workflows/, jobs/ at the repo root) — not a built package,
+# so uv only manages the environment and does not try to build a wheel.
+package = false
+# depth-anything-3 (numpy<2) and trackers (numpy>=2) can't share an environment;
+# declaring the extras as conflicting lets the universal lock resolve them in
+# separate forks instead of failing.
+conflicts = [[{ extra = "depth" }, { extra = "viz" }]]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Repo root on sys.path so `from tools...` / `from workflows...` resolve under
+# the flat layout, exactly as they do when running `python -m workflows.<x>`.
+pythonpath = ["."]
+markers = [
+    "integration: hits the network / HF Hub / HF Jobs (opt-in, needs HF_TOKEN)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["viz_output", "viz_judged", "viz_test_predictions", "checkpoints"]

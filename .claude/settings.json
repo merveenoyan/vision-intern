@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(hf jobs ps:*)",
+      "Bash(hf jobs inspect:*)",
+      "Bash(hf jobs logs:*)",
+      "Bash(ls:*)",
+      "Bash(nvidia-smi:*)"
+    ]
+  }
+}
