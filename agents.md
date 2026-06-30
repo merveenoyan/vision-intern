@@ -164,6 +164,11 @@ that HF Jobs will clone.
   is light + single-GPU → `l4x1` is plenty; reserve `l40sx1`/multi-GPU for large
   data or long schedules. CPU stages (router labelling, merge) → `cpu-upgrade`.
   So the big GPU usually goes to the *large judge*, not to training.
+- **Never downgrade the 8B judge to `l4x1` to escape an `l40sx1` queue.** An 8B
+  VLM on an L4 hangs/crawls — observed ~2h on a 20-row smoke that never finished.
+  If `l40sx1` sits in `SCHEDULING` (capacity), escalate *up* to `a100-large`, not
+  *down* to `l4x1`; watch `SCHEDULING→RUNNING` and switch flavor if it doesn't
+  allocate within a few minutes rather than queuing for hours.
 - **Never lose artifacts.** Training always sets `push_to_hub=True` + an explicit
   `hub_model_id`. Give Jobs a generous `--timeout` (a long final push can run
   past the default and get flagged ERROR *after* the data uploaded fine).

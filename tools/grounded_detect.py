@@ -8,15 +8,21 @@ from PIL import Image
 
 from .utils import get_or_load, load_image
 
-MODEL_ID = "openmmlab-community/mm_grounding_dino_tiny_o365v1_goldg_v3det"
+# size -> checkpoint. Both share the mm-grounding-dino architecture, processor,
+# and inference path; "large" trades speed for accuracy.
+MODELS: dict[str, str] = {
+    "tiny": "openmmlab-community/mm_grounding_dino_tiny_o365v1_goldg_v3det",
+    "large": "openmmlab-community/mm_grounding_dino_large_all",
+}
 
 
-def _load() -> tuple[Any, Any]:
+def _load(model_id: str) -> tuple[Any, Any]:
     from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
 
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
+    processor = AutoProcessor.from_pretrained(model_id)
+    # float32: the deformable-attention grid_sample op has no bf16 kernel.
     model = AutoModelForZeroShotObjectDetection.from_pretrained(
-        MODEL_ID, device_map="auto", torch_dtype=torch.bfloat16
+        model_id, device_map="auto", torch_dtype=torch.float32
     )
     model.eval()
     return model, processor
@@ -27,6 +33,7 @@ def grounded_detect(
     text_queries: list[str],
     threshold: float = 0.3,
     text_threshold: float = 0.25,
+    size: str = "tiny",
 ) -> list[dict]:
     """Detect objects matching free-form *text_queries*.
 
@@ -35,13 +42,18 @@ def grounded_detect(
         text_queries: open-vocabulary class names, e.g. ["cat", "remote control"]
         threshold: detection confidence threshold
         text_threshold: per-token threshold for phrase extraction
+        size: which checkpoint to use — "tiny" (fast) or "large" (more accurate)
 
     Returns a list of detections, each a dict with:
         label (str): matched text phrase
         score (float): confidence
         box (list[float]): [x1, y1, x2, y2] in pixel coordinates
     """
-    model, processor = get_or_load("mm_grounding_dino", _load)
+    if size not in MODELS:
+        raise ValueError(f"size must be one of {sorted(MODELS)}, got {size!r}")
+
+    model_id = MODELS[size]
+    model, processor = get_or_load(f"mm_grounding_dino_{size}", lambda: _load(model_id))
     image = load_image(image)
 
     inputs = processor(

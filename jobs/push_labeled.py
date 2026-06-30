@@ -34,6 +34,10 @@ def main() -> None:
     p.add_argument("--allow-missing", action="store_true",
                    help="Push even if some rows have no checkpointed detections "
                         "(default: refuse, so you don't ship a half-labelled set).")
+    p.add_argument("--drop-missing", action="store_true",
+                   help="Drop rows with no checkpointed detections from the output "
+                        "entirely (vs --allow-missing, which ships them as empty). "
+                        "Use when unlabelled rows would be false negatives.")
     args = p.parse_args()
 
     from datasets import Image as HFImage
@@ -54,12 +58,19 @@ def main() -> None:
     done = load_checkpoint(args.checkpoint)
 
     missing = [k for k in keys if k not in done]
-    if missing and not args.allow_missing:
+    if missing and args.drop_missing:
+        keep_idx = [i for i, k in enumerate(keys) if k in done]
+        ds = ds.select(keep_idx)
+        keys = [keys[i] for i in keep_idx]
+        print(f"Dropping {len(missing)} unlabelled rows; pushing {len(keys)} "
+              f"labelled rows", flush=True)
+    elif missing and not args.allow_missing:
         raise SystemExit(
             f"Refusing to push: {len(missing)}/{len(ds)} rows have no detections "
-            f"in {args.checkpoint}. Finish labelling (rerun jobs/label_local.py) "
-            f"or pass --allow-missing to push them as empty.")
-    if missing:
+            f"in {args.checkpoint}. Finish labelling (rerun jobs/label_local.py), "
+            f"pass --drop-missing to exclude them, or --allow-missing to push "
+            f"them as empty.")
+    elif missing:
         print(f"WARNING: pushing {len(missing)} rows with empty detections",
               flush=True)
 

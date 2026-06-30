@@ -43,6 +43,9 @@ def fast_segment(
     inputs = processor(
         images=image, input_boxes=[bboxes], return_tensors="pt"
     ).to(model.device)
+    # Weights are bf16; cast only float tensors so integer inputs keep dtype.
+    inputs = {k: v.to(model.dtype) if torch.is_floating_point(v) else v
+              for k, v in inputs.items()}
 
     with torch.inference_mode():
         outputs = model(**inputs, multimask_output=True)

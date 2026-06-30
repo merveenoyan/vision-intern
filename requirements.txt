@@ -15,3 +15,7 @@ timm
 torchmetrics
 albumentations
 trackio
+supervision>=0.26
+trackers>=2.0,!=2.5.0
+depth-anything-3
+qwen-vl-utils

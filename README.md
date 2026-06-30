@@ -42,7 +42,8 @@ This is a [`uv`](https://docs.astral.sh/uv/) project:
 ```bash
 uv sync                 # core: label / judge / merge (no torch)
 uv sync --extra train   # adds torch, transformers, timm, albumentations, … for training
-uv sync --extra all     # train + dev tooling (pytest, ruff)
+uv sync --extra viz     # adds supervision + Roboflow trackers (bbox + tracking viz)
+uv sync --extra all     # train + viz + dev tooling (pytest, ruff)
 ```
 
 Then run anything with `uv run` (e.g. `uv run python -m workflows.vlm_label …`).
@@ -182,7 +183,7 @@ same three can be set via `VISION_AGENT_BACKEND` / `VISION_AGENT_MODEL` /
 
 ## Inference backends
 
-All VLM-powered tools (`vlm_detect`, `document_ocr`, `ocr_judge`) and
+All VLM-powered tools (`vlm_detect`, `ocr_judge`) and
 workflows (`label_dataset`, `judge_labels`) support two backends:
 
 ### `backend="openai"` (recommended for serving)
@@ -239,11 +240,12 @@ vlm_detect(
 | `fast_segment` | EdgeTAM — lightweight bbox to mask |
 | `ocr` | PaddleOCR-VL — vision-language OCR |
 | `vlm_detect` | VLM instruction-prompted detection (any VLM) |
-| `document_ocr` | Document OCR to markdown (text, tables, formulas) |
 | `ocr_judge` | Pairwise OCR quality evaluation with ELO rating |
 | `convert_bbox` | Convert bboxes between 6 formats |
 | `validate_annotations` | Validate detection annotations for issues |
 | `compute_stats` | Statistics for COCO annotation files |
+| `annotate` | supervision-backed box + mask visualization (per-class / per-track colours) |
+| `track_video` | Roboflow trackers + supervision multi-object tracking (boxes or instance masks) |
 
 ## Workflows reference
 
@@ -255,6 +257,48 @@ vlm_detect(
 
 All workflows support both **local directories** (COCO format) and
 **Hugging Face datasets** as input and output.
+
+## Visualization & tracking (`viz` extra)
+
+[`supervision`](https://supervision.roboflow.com) and the
+[`trackers`](https://github.com/roboflow/trackers) package back the bbox
+visualization and multi-object tracking tools. Install with `uv sync --extra viz`.
+Both bridge to the repo's plain detection-dicts
+(`{"label", "score", "box"/"bbox", ...}`) via `tools.sv_convert`, so any
+detector here (`detect`, `grounded_detect`, `vlm_detect`) feeds straight in.
+
+```python
+from tools import annotate, track_video
+
+# Still image: draw boxes + labels with per-class colours (drop-in for the
+# pure-PIL tools.bbox_viz.draw_detections; also takes judge `verdicts`).
+annotate("frame.jpg", detections, verdicts=verdicts).save("annotated.png")
+
+# Video: detect (or instance-segment) every frame, associate with a Roboflow
+# tracker, and write an annotated copy with stable per-object colours, ids,
+# motion trails — and masks when a segmentation detector is used.
+track_video("clip.mp4", detector="rfdetr", tracker="bytetrack")      # boxes
+track_video("clip.mp4", detector="rfdetr-seg")                       # tracked instance masks
+track_video("clip.mp4", detector="falcon", classes=["red car"])      # open-vocab masks
+```
+
+Per-frame detectors: `rfdetr` (RF-DETR boxes), `grounded` (MM-Grounding-DINO,
+open-vocab boxes), `vlm` (VLM-prompted boxes), `rfdetr-seg` (RF-DETR-Seg instance
+masks) and `falcon` (Falcon-Perception, open-vocab masks). Trackers associate on
+boxes (derived from masks for the segmentation detectors) and the masks ride
+along, so tracked instances keep a stable colour + id frame to frame.
+
+```bash
+# Annotate one image from a detections JSON file
+python -m tools.sv_viz frame.jpg -d dets.json --out annotated.png
+
+# Track objects through a video (bytetrack | sort | ocsort | botsort)
+python -m tools.track_video clip.mp4 --detector grounded --classes "car,person" \
+    --tracker bytetrack --out tracked.mp4
+```
+
+`track_video` needs both the `viz` extra and a detector from the `train` extra
+(torch); the still-image `annotate` runs on a CPU-only `viz` install.
 
 ## CLI usage
 

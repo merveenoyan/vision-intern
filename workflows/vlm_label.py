@@ -141,14 +141,11 @@ def _label_hub(
     if max_samples:
         ds = ds.select(range(min(max_samples, len(ds))))
 
-    all_detections: list[list[dict]] = []
     class_set = set(classes)
 
-    for row in tqdm(ds, desc="Labeling", total=len(ds)):
-        img = row[image_column]
+    def _label_row(img: Any) -> list[dict]:
         if not isinstance(img, Image.Image):
             img = load_image(img)
-
         try:
             dets = vlm_detect(
                 img, classes=classes, model_id=model_id,
@@ -157,8 +154,31 @@ def _label_hub(
         except Exception as e:
             print(f"\n  [warn] vlm_detect failed, skipping: {e}")
             dets = []
-        dets = [d for d in dets if d.get("label", "").lower() in class_set]
-        all_detections.append(dets)
+        return [d for d in dets if d.get("label", "").lower() in class_set]
+
+    # Router/openai calls are I/O-bound and the per-image router latency is the
+    # long pole for large splits, so fan them out across threads (order
+    # preserved by index). Local `transformers` inference stays sequential to
+    # avoid GPU contention/OOM. Tune with LABEL_MAX_WORKERS (default 16 for the
+    # router, 1 otherwise).
+    import os as _os
+    default_workers = 16 if backend == "openai" else 1
+    max_workers = int(_os.environ.get("LABEL_MAX_WORKERS", default_workers))
+
+    images = [ds[i][image_column] for i in range(len(ds))]
+    if max_workers <= 1:
+        all_detections = [
+            _label_row(img) for img in tqdm(images, desc="Labeling", total=len(ds))
+        ]
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        all_detections = [None] * len(images)
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_label_row, img): i for i, img in enumerate(images)}
+            for fut in tqdm(
+                as_completed(futures), desc="Labeling", total=len(images),
+            ):
+                all_detections[futures[fut]] = fut.result()
 
     ds = ds.add_column("detections", all_detections)
 

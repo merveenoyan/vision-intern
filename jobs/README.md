@@ -20,6 +20,13 @@ judges):
 > plenty; reserve `l40sx1`/multi-GPU for large datasets or long schedules. So in
 > practice the big GPU goes to the *large judge*, not to training. CPU stages
 > (router labelling, merge) stay on `cpu-upgrade`.
+>
+> **Do NOT downgrade the 8B judge to `l4x1` to dodge an `l40sx1` queue.** An 8B
+> VLM on an L4 hangs/crawls — observed ~2h on a 20-row smoke test that never
+> finished (and billed the whole time). If `l40sx1` is stuck in `SCHEDULING`
+> (capacity), escalate *up* to `a100-large`, never *down* to `l4x1`. After
+> submitting, watch the `SCHEDULING→RUNNING` transition; if it hasn't allocated
+> within a few minutes, cancel and switch flavor rather than letting it queue.
 
 ¹ Qwen3.5-9B has live HF Inference Providers, so `label_qwen.py` labels through
 the HF router (`openai` backend) on a CPU job — no GPU load. It uses the

@@ -12,7 +12,7 @@ the agent-facing schema stays down to the *task* arguments.
 
 Roles
 -----
-``"default"``   VLM tools (``vlm_detect``, ``document_ocr``, ``ocr_judge``).
+``"default"``   VLM tools (``vlm_detect``, ``ocr_judge``).
 ``"labeller"``  the ``label_dataset`` workflow (the larger worker).
 ``"judge"``     the ``judge_labels`` workflow (the smaller verifier).
 

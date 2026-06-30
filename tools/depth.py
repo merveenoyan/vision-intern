@@ -1,4 +1,4 @@
-"""Depth Anything V2 — monocular relative depth estimation."""
+"""Depth Anything 3 — monocular depth estimation."""
 from __future__ import annotations
 
 from typing import Any
@@ -9,37 +9,45 @@ from PIL import Image
 
 from .utils import get_or_load, load_image
 
-MODEL_ID = "depth-anything/Depth-Anything-V2-Base-hf"
+MODEL_ID = "depth-anything/DA3-LARGE-1.1"
 
 
 def _load() -> tuple[Any, Any]:
-    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+    # DA3 ships its own library (`pip install depth-anything-3`); it does not
+    # use transformers' AutoModelForDepthEstimation. There is no separate
+    # processor, so the second slot of the (model, processor) cache is None.
+    from depth_anything_3.api import DepthAnything3
 
-    processor = AutoImageProcessor.from_pretrained(MODEL_ID)
-    model = AutoModelForDepthEstimation.from_pretrained(
-        MODEL_ID, device_map="auto", torch_dtype=torch.float32
-    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = DepthAnything3.from_pretrained(MODEL_ID).to(device=device)
     model.eval()
-    return model, processor
+    return model, None
 
 
 def estimate_depth(image: str | Image.Image) -> dict:
-    """Estimate relative depth for every pixel.
+    """Estimate monocular depth for every pixel.
 
     Returns a dict with:
         depth_map: (H, W) float32 tensor at original resolution (higher = farther)
     """
-    model, processor = get_or_load("depth_anything_v2", _load)
+    model, _ = get_or_load("depth_anything_3", _load)
     image = load_image(image)
     w, h = image.size
 
-    inputs = processor(images=image, return_tensors="pt").to(model.device)
-    with torch.inference_mode():
-        outputs = model(**inputs)
+    # DA3's inference() takes a list of images (PIL/np/path); default export is
+    # off (export_dir=None), and depth comes back at process_res (504), so we
+    # interpolate to the original resolution below.
+    prediction = model.inference([image])
 
-    depth = outputs.predicted_depth  # (1, h', w')
+    # prediction.depth is (N, H', W') float32; take the single frame.
+    depth = prediction.depth[0]
+    if not torch.is_tensor(depth):
+        depth = torch.as_tensor(depth)
+    depth = depth.float()
+
+    # Resize back to the original image resolution.
     depth = F.interpolate(
-        depth.unsqueeze(0), size=(h, w), mode="bilinear", align_corners=False
+        depth[None, None], size=(h, w), mode="bilinear", align_corners=False
     ).squeeze()
 
     return {"depth_map": depth.cpu()}

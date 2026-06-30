@@ -69,8 +69,6 @@ _ENTRIES: list[dict] = [
     # --- VLM tools (openai backend → no torch needed) ---
     {"name": "vlm_detect", "module": "tools.vlm_detect", "attr": "vlm_detect",
      "hidden": _VLM_HIDDEN, "role": "default", "requires_train": False},
-    {"name": "document_ocr", "module": "tools.document_ocr", "attr": "document_ocr",
-     "hidden": _VLM_HIDDEN, "role": "default", "requires_train": False},
     {"name": "ocr_judge", "module": "tools.ocr_judge", "attr": "ocr_judge",
      "hidden": _VLM_HIDDEN, "role": "default", "requires_train": False},
     # --- pipeline workflows ---
@@ -96,9 +94,23 @@ _ENTRIES: list[dict] = [
      "hidden": set(), "role": "default", "requires_train": True},
     {"name": "estimate_depth", "module": "tools.depth", "attr": "estimate_depth",
      "hidden": set(), "role": "default", "requires_train": True},
+    # --- human-centric Sapiens2 tools ---
     {"name": "estimate_pose", "module": "tools.pose", "attr": "estimate_pose",
      "hidden": set(), "role": "default", "requires_train": True},
+    {"name": "segment_body_parts", "module": "tools.segment_body_parts",
+     "attr": "segment_body_parts",
+     "hidden": set(), "role": "default", "requires_train": True},
+    {"name": "estimate_surface_normals", "module": "tools.surface_normals",
+     "attr": "estimate_surface_normals",
+     "hidden": set(), "role": "default", "requires_train": True},
+    {"name": "matte_human", "module": "tools.human_matting", "attr": "matte_human",
+     "hidden": set(), "role": "default", "requires_train": True},
     {"name": "ocr", "module": "tools.ocr", "attr": "ocr",
+     "hidden": set(), "role": "default", "requires_train": True},
+    # Tracking visualization: per-frame detect → Roboflow tracker → annotate.
+    # Needs a torch detector (the `train` extra) plus supervision/trackers
+    # (the `viz` extra), so it is gated like the other GPU tools.
+    {"name": "track_video", "module": "tools.track_video", "attr": "track_video",
      "hidden": set(), "role": "default", "requires_train": True},
     # --- CPU-only helpers ---
     {"name": "convert_bbox", "module": "tools.bbox_utils", "attr": "convert_bbox",

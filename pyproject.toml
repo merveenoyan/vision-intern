@@ -34,17 +34,42 @@ train = [
     "scipy",
     "einops",
     "trackio",
+    "qwen-vl-utils",     # ocr(size="medium") dots.mocr vision preprocessing
+]
+# estimate_depth (DA3-LARGE). Kept in its own extra because depth-anything-3
+# hard-pins numpy<2, which is incompatible with the `viz` extra's trackers
+# (numpy>=2). They are declared as conflicting extras below — install one or
+# the other, not both, in a single environment.
+depth = [
+    "depth-anything-3",
+]
+# Roboflow supervision + trackers: bbox visualization and multi-object
+# tracking visualization. No torch — supervision/trackers pull opencv + scipy
+# only, so the annotators run on a CPU-only install. (The `track_video` tool
+# additionally needs a per-frame detector from the `train` extra.)
+viz = [
+    "supervision>=0.26",
+    # 2.5.0's published wheel is an empty stub (no package payload); skip it.
+    "trackers>=2.0,!=2.5.0",
 ]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
 ]
+# `all` is the numpy-flexible base bundle (train + dev). `viz` (trackers,
+# numpy>=2) and `depth` (depth-anything-3, numpy<2) are mutually-exclusive
+# add-ons — pick one and combine with `all` as needed, e.g.
+# `uv sync --extra all --extra viz` or `uv sync --extra all --extra depth`.
 all = ["vision-agent[train,dev]"]
 
 [tool.uv]
 # Flat layout (tools/, workflows/, jobs/ at the repo root) — not a built package,
 # so uv only manages the environment and does not try to build a wheel.
 package = false
+# depth-anything-3 (numpy<2) and trackers (numpy>=2) can't share an environment;
+# declaring the extras as conflicting lets the universal lock resolve them in
+# separate forks instead of failing.
+conflicts = [[{ extra = "depth" }, { extra = "viz" }]]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
