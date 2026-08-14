@@ -85,3 +85,22 @@ def test_compute_stats_on_minimal_coco():
     assert set(stats["label_distribution"]) == {"table", "figure"}
     # the two categories co-occur in the one image
     assert stats["co_occurrence_pairs"][0]["count"] == 1
+
+
+def test_compute_stats_reports_area_per_category():
+    """per_cat_areas is aggregated in the loop, so it has to reach the caller."""
+    coco = {
+        "images": [{"id": 1, "width": 100, "height": 100}],
+        "annotations": [
+            {"image_id": 1, "category_id": 1, "bbox": [0, 0, 10, 10]},   # area 100
+            {"image_id": 1, "category_id": 1, "bbox": [0, 0, 30, 10]},   # area 300
+            {"image_id": 1, "category_id": 2, "bbox": [0, 0, 20, 20]},   # area 400
+        ],
+        "categories": [{"id": 1, "name": "table"}, {"id": 2, "name": "figure"}],
+    }
+    per_cat = compute_stats(coco)["per_category_area"]
+    assert set(per_cat) == {"table", "figure"}
+    assert per_cat["table"]["count"] == 2
+    assert per_cat["table"]["min"] == 100 and per_cat["table"]["max"] == 300
+    assert per_cat["table"]["mean"] == 200
+    assert per_cat["figure"]["count"] == 1
