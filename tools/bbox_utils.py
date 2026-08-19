@@ -290,6 +290,7 @@ def compute_stats(
         "label_distribution": dict(cat_counts.most_common(top)),
         "annotation_density": _dist([float(x) for x in sorted(anns_per_img)]),
         "bbox_area": _dist(areas),
+        "per_category_area": {k: _dist(v) for k, v in per_cat_areas.items() if v},
         "bbox_aspect_ratio": _dist(aspect_ratios),
         "co_occurrence_pairs": [
             {"pair": list(p), "count": c} for p, c in cooccur.most_common(top)
