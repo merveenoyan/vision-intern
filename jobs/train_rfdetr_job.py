@@ -19,12 +19,15 @@
 """HF Job — STAGE 4: train RF-DETR on the ensemble-judged dataset.
 
 Clones the repo and runs the existing generalized trainer
-(``workflows.train_rfdetr``) on ``merve/docvqa-media-judged-ensemble``, holding
-out 15% for mAP, and pushes the model to the Hub.
+(``workflows.train_rfdetr``) on an explicitly selected ensemble-policy dataset,
+holding out 15% for mAP, and pushes the model to the Hub. Pipeline detections
+are selected explicitly so an inherited ``objects`` column cannot shadow them.
 
-    hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 6h \
+    hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 6h \
       -e REPO_REF=multimodel-jobs \
-      jobs/train_rfdetr_job.py -- --epochs 20 --batch-size 8
+      jobs/train_rfdetr_job.py -- \
+      --source merve/docvqa-media-judged-ensemble-agree1 \
+      --hub-model-id merve/rfdetr-docvqa-qwen-agree1
 """
 
 from __future__ import annotations
@@ -45,9 +48,9 @@ if not REPO_DIR.exists():
                     REPO_URL, str(REPO_DIR)], check=True)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
-    p.add_argument("--source", default="merve/docvqa-media-judged-ensemble")
+    p.add_argument("--source", required=True)
     p.add_argument("--train-split", default="test")
     p.add_argument("--val-split", default="none")
     p.add_argument("--val-size", type=float, default=0.15)
@@ -58,14 +61,21 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=5e-5,
                    help="Peak LR. Lower it (e.g. 1e-5) when continuing from an "
                         "already-converged checkpoint.")
+    p.add_argument("--annotation-source", default="detections",
+                   choices=["auto", "objects", "detections"],
+                   help="Annotation column passed to the trainer.")
     p.add_argument("--no-augment", action="store_true",
                    help="Disable Albumentations aug. Needed for direction/colour"
                         "-coded classes: HorizontalFlip mirrors left/right signs "
                         "and colour jitter scrambles light colours, both "
                         "label-breaking for road signs.")
-    p.add_argument("--output-dir", default="checkpoints/rfdetr-docvqa-moondream")
-    p.add_argument("--hub-model-id", default="merve/rfdetr-docvqa-moondream")
-    args = p.parse_args()
+    p.add_argument("--output-dir", default="checkpoints/rfdetr-finetuned")
+    p.add_argument("--hub-model-id", required=True)
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     cmd = [
         sys.executable, "-m", "workflows.train_rfdetr",
@@ -73,6 +83,7 @@ def main() -> None:
         "--train-split", args.train_split,
         "--val-split", args.val_split,
         "--val-size", str(args.val_size),
+        "--annotation-source", args.annotation_source,
         "--model", args.model,
         "--epochs", str(args.epochs),
         "--batch-size", str(args.batch_size),

@@ -212,6 +212,7 @@ def _load_normalized(
     val_split: str | None,
     image_column: str,
     detections_column: str,
+    annotation_source: str,
     val_size: float,
     seed: int,
 ) -> tuple[Any, Any, dict[int, str], dict[str, int]]:
@@ -229,26 +230,25 @@ def _load_normalized(
     if image_column != "image":
         raw = raw.rename_column(image_column, "image")
 
+    from tools.dataset_utils import resolve_annotation_source
+
     cols = raw.column_names
-    if "objects" in cols:
+    source_column = resolve_annotation_source(
+        cols, detections_column, annotation_source,
+    )
+    if source_column == "objects":
         id2label, label2id = _categories_from_objects(raw)
         norm = raw.map(
             partial(_normalize_objects_row, label2id=label2id),
             with_indices=True, remove_columns=cols,
         )
-    elif detections_column in cols:
+    else:
         id2label, label2id = _categories_from_detections(raw, detections_column)
         norm = raw.map(
             partial(_normalize_detections_row, label2id=label2id,
                     detections_column=detections_column),
             with_indices=True, remove_columns=cols,
         )
-    else:
-        raise ValueError(
-            f"Dataset has neither an 'objects' nor a '{detections_column}' column. "
-            f"Found: {cols}"
-        )
-
     norm = norm.filter(lambda x: len(x["objects"]["bbox"]) > 0)
 
     if val_split:
@@ -257,7 +257,10 @@ def _load_normalized(
             if image_column != "image":
                 raw_val = raw_val.rename_column(image_column, "image")
             vcols = raw_val.column_names
-            if "objects" in vcols:
+            val_source_column = resolve_annotation_source(
+                vcols, detections_column, annotation_source,
+            )
+            if val_source_column == "objects":
                 val_ds = raw_val.map(
                     partial(_normalize_objects_row, label2id=label2id),
                     with_indices=True, remove_columns=vcols,
@@ -446,6 +449,7 @@ def train(
     augment: bool = True,
     image_column: str = "image",
     detections_column: str = "detections",
+    annotation_source: str = "auto",
     train_split: str = "train",
     val_split: str | None = "test",
     val_size: float = 0.0,
@@ -475,6 +479,9 @@ def train(
         package is missing).
     image_column / detections_column : str
         Column names (Hub mode).
+    annotation_source : {"auto", "objects", "detections"}
+        Which annotation column to train on. ``auto`` preserves the historical
+        preference for ``objects``; use ``detections`` for curated VLM labels.
     train_split / val_split : str
         Dataset splits (Hub mode). Set *val_split* to ``None`` to skip the
         Hub validation split.
@@ -506,6 +513,7 @@ def train(
 
     train_ds, val_ds, id2label, label2id = _load_normalized(
         source, train_split, val_split, image_column, detections_column,
+        annotation_source,
         val_size, seed,
     )
     print(f"Categories ({len(id2label)}): {list(id2label.values())}")
@@ -606,6 +614,9 @@ def _cli() -> None:
                         help="Disable Albumentations augmentation")
     parser.add_argument("--image-column", default="image")
     parser.add_argument("--detections-column", default="detections")
+    parser.add_argument("--annotation-source", default="auto",
+                        choices=["auto", "objects", "detections"],
+                        help="Annotation column to train on")
     parser.add_argument("--train-split", default="train")
     parser.add_argument("--val-split", default="test",
                         help="Hub validation split ('none' to disable)")
@@ -633,6 +644,7 @@ def _cli() -> None:
         augment=not args.no_augment,
         image_column=args.image_column,
         detections_column=args.detections_column,
+        annotation_source=args.annotation_source,
         train_split=args.train_split,
         val_split=val_split,
         val_size=args.val_size,

@@ -43,15 +43,15 @@ live in **[`../../jobs/README.md`](../../jobs/README.md)** — that *is* this
 example's runbook. The use-case-specific choices captured here are the dataset,
 the dedupe, the class set, and the model-per-role table above.
 
-Verification gates at the merge step: `--min-agree 2` (both judges must vote
-`correct`) and `--max-area-frac 0.9` (a geometric guard dropping page-spanning
-boxes) — the single-judge VLM score is uncalibrated, so keeps are gated by
-these cheap non-vibe checks, recorded per box in `judge_verdicts`.
+The merge emits both policies: `--min-agree 1` (the default, higher recall) and
+`--min-agree 2` (both judges must vote `correct`, higher precision). Both also
+use `--max-area-frac 0.9`, a geometric guard dropping page-spanning boxes.
+These checks are recorded per box in `judge_verdicts`.
 
 ## Outputs
 - Labeled:  `merve/docvqa-media-labeled-qwen`
-- Judged:   `merve/docvqa-media-judged-ensemble`
-- Model:    `merve/rfdetr-docvqa-qwen`
+- Judged:   `merve/docvqa-media-judged-ensemble-agree1` / `-agree2`
+- Models:   `merve/rfdetr-docvqa-qwen-agree1` / `-agree2`
 
 Every dataset push includes an auto-generated box-overlay gallery (`viz/` +
 README), so boxes never need re-rendering to inspect.
@@ -60,9 +60,9 @@ README), so boxes never need re-rendering to inspect.
 - **Give jobs a generous `--timeout`.** Labelling 1000 rows and the gemma judge
   over 1000 rows both run past the default job timeout; the final push completes
   but the job is then flagged ERROR. `--timeout 3h` avoids the false failure.
-- **Strip the inherited `objects` column before training.** DocVQA rows carry a
-  human-GT `objects` column; the RF-DETR trainer prioritizes `objects` over our
-  VLM `detections`, so it must be dropped first (`jobs/strip_objects.py`).
+- **Select pipeline detections explicitly.** DocVQA rows carry a human-GT
+  `objects` column; the Jobs trainer passes `--annotation-source detections` so
+  it cannot shadow the curated VLM labels. No train-ready dataset copy is needed.
 - **Group the train/val split by image.** Pages can repeat; an image-grouped
   split (`tools.dataset_utils.grouped_train_val_split`) keeps a page out of both
   splits, otherwise mAP is inflated by leakage.

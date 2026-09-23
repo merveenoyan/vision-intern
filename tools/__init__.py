@@ -27,7 +27,7 @@ grounded_detect     MM-Grounding-DINO — open-vocab detection (size: tiny/large
 fast_segment        EdgeTAM — lightweight bbox → mask (faster than SAM3)
 ocr                 Vision-language OCR (size: large/medium/small)
 vlm_detect          VLM instruction-prompted detection (free-form prompts)
-ocr_judge           Pairwise OCR quality evaluation (VLM-as-judge + ELO)
+ocr_judge           Pairwise OCR quality evaluation (VLM-as-judge)
 convert_bbox        Convert bboxes between 6 formats (coco/xyxy/yolo/voc/tfod/ls)
 validate_annotations  Validate detection annotations for common issues
 compute_stats       Compute rich statistics for a COCO annotation file
@@ -37,6 +37,7 @@ track_video         Roboflow trackers + supervision tracking visualization (vide
 dedupe_by_image     Collapse a dataset to one row per unique image
 grouped_train_val_split  Train/val split with no image leaking across splits
 image_key           Stable content hash of an image (for the two helpers above)
+masks_to_rle        Encode segmentation masks for agent-safe serialization
 
 Agent tool layer
 ----------------
@@ -79,6 +80,7 @@ _LAZY = {
     "dedupe_by_image": "dataset_utils",
     "grouped_train_val_split": "dataset_utils",
     "image_key": "dataset_utils",
+    "masks_to_rle": "utils",
     # Agent tool layer (registry + config are torch-free).
     "get_tools": "registry",
     "get_tool": "registry",
@@ -128,6 +130,7 @@ __all__ = [
     "dedupe_by_image",
     "grouped_train_val_split",
     "image_key",
+    "masks_to_rle",
     "get_tools",
     "get_tool",
     "list_tools",

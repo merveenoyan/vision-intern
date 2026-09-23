@@ -46,9 +46,11 @@ Intermediate verdicts pass between jobs through the bucket
 called for in `agents.md`.
 
 Datasets / artifacts (separate from the originals):
-`merve/docvqa-media-labeled-qwen` → `merve/docvqa-media-judged-ensemble` →
-`merve/rfdetr-docvqa-qwen`. Every dataset push includes an auto-generated
-box-overlay gallery (`viz/` + README), so boxes never need re-rendering.
+`merve/docvqa-media-labeled-qwen` →
+`merve/docvqa-media-judged-ensemble-agree{1,2}` →
+`merve/rfdetr-docvqa-qwen-agree{1,2}`. Every dataset push includes an
+auto-generated box-overlay gallery (`viz/` + README), so boxes never need
+re-rendering.
 
 ### How judging works (and its limits)
 The judge models (`google/gemma-4-E4B-it`, `LiquidAI/LFM2.5-VL-1.6B`) are small
@@ -64,9 +66,10 @@ evaluating each numbered box by *looking at it*, instead of being handed raw
 `bbox` coordinates over the bare image (VLMs reason about pixel coordinates
 poorly, the main hallucination source). The per-judge `score` is still an
 **uncalibrated VLM confidence**, not a metric — so the keep decision is gated
-by two cheap, non-vibe checks: `--min-agree 2` (both judges must vote
-`correct`) and a `--max-area-frac 0.9` page-spanning guard (a pure geometric
-filter, no VLM). Both checks are recorded per detection in `judge_verdicts`
+by vote agreement plus a cheap non-vibe check. `--min-agree` defaults to `1`
+(higher recall); the separately emitted agree2 policy requires both judges.
+`--max-area-frac 0.9` adds a page-spanning guard (pure geometry, no VLM).
+Both checks are recorded per detection in `judge_verdicts`
 (`area_frac`, `geom_keep`). Judges fall back to rendering the overlay on the fly
 when the column is absent (e.g. datasets labelled before this change).
 
@@ -136,8 +139,7 @@ hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
 # 3 — merge (after both judges SUCCEEDED). ALWAYS emit BOTH ensemble policies as
 # separate repos: -agree1 (--min-agree 1, higher recall) and -agree2 (--min-agree
 # 2, higher precision). Both ship a box-overlay gallery (push_dataset_with_viz);
-# compare them (and optionally train both) before picking one. Same verdicts, two
-# cheap CPU merges.
+# compare them before picking one. Same verdicts, two cheap CPU merges.
 for AG in 1 2; do
 hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   jobs/merge_judges.py -- --dataset merve/docvqa-media-labeled-qwen \
@@ -147,16 +149,18 @@ hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   --min-agree $AG --max-area-frac 0.9
 done
 
-# 4 — train RF-DETR (after merge SUCCEEDED). Defaults to rf-detr-large + 20
-# epochs; a small curated set is still light enough for l4x1 (bump to l40sx1 for
-# 30+ epochs / long schedules). Add --no-augment if the data trains better
+# 4 — train RF-DETR on both policies (after both merges SUCCEEDED). Defaults to
+# rf-detr-large + 20 epochs; a small curated set is still light enough for l4x1
+# (bump to l40sx1 for 30+ epochs / long schedules). Add --no-augment if the data trains better
 # without augmentation (assess per use case). The val split is grouped by image
 # (tools.dataset_utils.grouped_train_val_split), so repeated images can't leak
 # across train/val — no need to pre-split.
+for AG in 1 2; do
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN $REF --timeout 6h -d \
   jobs/train_rfdetr_job.py -- --epochs 20 --batch-size 8 \
-  --source merve/docvqa-media-judged-ensemble \
-  --hub-model-id merve/rfdetr-docvqa-qwen
+  --source merve/docvqa-media-judged-ensemble-agree$AG \
+  --hub-model-id merve/rfdetr-docvqa-qwen-agree$AG
+done
 ```
 
 ## Babysitting

@@ -45,7 +45,7 @@ if not REPO_DIR.exists():
 sys.path.insert(0, str(REPO_DIR))
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default="merve/docvqa-media-labeled-moondream")
     p.add_argument("--split", default="test")
@@ -62,14 +62,18 @@ def main() -> None:
     p.add_argument("--bucket", default=None,
                    help="Bucket id for the hf:// fallback (default "
                         "merve/vision-agent-runs).")
-    p.add_argument("--min-agree", type=int, default=2,
+    p.add_argument("--min-agree", type=int, default=1,
                    help="Min judges voting 'correct' to keep a detection.")
     p.add_argument("--threshold", type=float, default=0.0)
     p.add_argument("--max-area-frac", type=float, default=0.9,
                    help="Drop detections whose box covers more than this "
                         "fraction of the page (non-VLM page-spanning guard).")
     p.add_argument("--max-samples", type=int, default=None)
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     from datasets import load_dataset
 

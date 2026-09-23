@@ -60,7 +60,6 @@ def main() -> None:
     p.add_argument("--max-samples", type=int, default=None)
     args = p.parse_args()
 
-    import numpy as np
     import torch
     from datasets import load_dataset
     from PIL import Image

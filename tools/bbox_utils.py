@@ -30,8 +30,6 @@ import argparse
 import json
 import math
 from collections import Counter, defaultdict
-from typing import Any
-
 BBOX_FORMATS = ("coco_xywh", "xyxy", "voc", "yolo", "tfod", "label_studio")
 
 
@@ -231,8 +229,6 @@ def compute_stats(
         annotation density, per-category areas, and co-occurrence pairs.
     """
     id2cat = {c["id"]: c["name"] for c in coco.get("categories", [])}
-    id2img = {img["id"]: img for img in coco.get("images", [])}
-
     img2anns: dict[int, list] = defaultdict(list)
     for ann in coco.get("annotations", []):
         img2anns[ann["image_id"]].append(ann)

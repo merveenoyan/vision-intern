@@ -248,7 +248,7 @@ vlm_detect(
 | `fast_segment` | EdgeTAM — lightweight bbox to mask |
 | `ocr` | PaddleOCR-VL — vision-language OCR |
 | `vlm_detect` | VLM instruction-prompted detection (any VLM) |
-| `ocr_judge` | Pairwise OCR quality evaluation with ELO rating |
+| `ocr_judge` | Pairwise OCR quality evaluation with a VLM-as-judge |
 | `convert_bbox` | Convert bboxes between 6 formats |
 | `validate_annotations` | Validate detection annotations for issues |
 | `compute_stats` | Statistics for COCO annotation files |
@@ -333,6 +333,7 @@ python -m workflows.vlm_judge \
 # Train (mAP/mAR eval on a held-out split, push to the Hub)
 python -m workflows.train_rfdetr \
     --source username/my-dataset-judged --val-split test \
+    --annotation-source detections \
     --model Roboflow/rf-detr-large --epochs 20 --batch-size 8 \
     --output-dir checkpoints/my-detector
 ```

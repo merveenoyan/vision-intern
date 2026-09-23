@@ -8,6 +8,8 @@ launches".
 """
 
 import ast
+import importlib
+import sys
 import tomllib
 from pathlib import Path
 
@@ -55,3 +57,52 @@ def test_at_least_the_core_pipeline_scripts_are_uv_scripts():
         assert stage in names, f"expected pipeline stage {stage} in jobs/"
         block = _pep723_block((JOBS_DIR / stage).read_text())
         assert block is not None, f"{stage} must carry a PEP-723 uv header"
+
+
+def _import_job(monkeypatch, name):
+    monkeypatch.setenv("REPO_DIR", str(JOBS_DIR.parent))
+    sys.modules.pop(f"jobs.{name}", None)
+    return importlib.import_module(f"jobs.{name}")
+
+
+def test_merge_job_defaults_to_higher_recall_policy(monkeypatch):
+    module = _import_job(monkeypatch, "merge_judges")
+
+    args = module.build_parser().parse_args(["--verdicts", "judge::verdicts.parquet"])
+
+    assert args.min_agree == 1
+
+
+def test_train_job_requires_artifact_ids_and_uses_detections(monkeypatch):
+    module = _import_job(monkeypatch, "train_rfdetr_job")
+    parser = module.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
+    args = parser.parse_args([
+        "--source", "owner/data-agree1",
+        "--hub-model-id", "owner/model-agree1",
+    ])
+
+    assert args.annotation_source == "detections"
+
+
+def test_train_job_forwards_annotation_source(monkeypatch):
+    module = _import_job(monkeypatch, "train_rfdetr_job")
+    captured = {}
+
+    def fake_run(command, **_kwargs):
+        captured["command"] = command
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", [
+        "train_rfdetr_job.py",
+        "--source", "owner/data-agree1",
+        "--hub-model-id", "owner/model-agree1",
+    ])
+
+    module.main()
+
+    command = captured["command"]
+    option = command.index("--annotation-source")
+    assert command[option + 1] == "detections"

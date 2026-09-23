@@ -26,6 +26,41 @@ if TYPE_CHECKING:
     from PIL import Image
 
 
+def resolve_annotation_source(
+    columns: Sequence[str],
+    detections_column: str = "detections",
+    requested: str = "auto",
+) -> str:
+    """Resolve which annotation column training should consume.
+
+    ``requested="auto"`` preserves the historical preference for ``objects``.
+    An explicit source always wins and must exist, preventing a dataset's
+    inherited ground truth from silently shadowing pipeline detections.
+    """
+    if requested not in ("auto", "objects", "detections"):
+        raise ValueError(
+            "annotation_source must be 'auto', 'objects', or 'detections'"
+        )
+    available = set(columns)
+    if requested == "auto":
+        if "objects" in available:
+            return "objects"
+        if detections_column in available:
+            return detections_column
+        raise ValueError(
+            f"Dataset has neither an 'objects' nor a '{detections_column}' column. "
+            f"Found: {list(columns)}"
+        )
+
+    column = "objects" if requested == "objects" else detections_column
+    if column not in available:
+        raise ValueError(
+            f"Requested annotation source '{column}' is not in the dataset. "
+            f"Found: {list(columns)}"
+        )
+    return column
+
+
 def image_key(image: "str | Image.Image") -> str:
     """Return a stable content hash for *image* (md5 of its raw RGB bytes).
 

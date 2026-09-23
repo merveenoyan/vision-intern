@@ -165,7 +165,7 @@ def test_call_routes_judge_role(monkeypatch):
     captured = {}
 
     def fake(source=None, output=None, model_id=None, backend=None,
-             base_url=None, api_key=None, **kw):
+             base_url=None, api_key=None):
         captured.update(model_id=model_id, base_url=base_url)
         return captured
 

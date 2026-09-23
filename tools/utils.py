@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable

@@ -4,7 +4,7 @@ Adapted from `uv-scripts/ocr (ocr-vllm-judge.py)
 <https://huggingface.co/datasets/uv-scripts/ocr>`_.
 Given a document image and two OCR outputs, a VLM judge decides which is
 better on faithfulness, completeness, accuracy, reading order, and
-formatting.  Includes ELO computation for ranking multiple models.
+formatting.
 
 Supports two backends (see :mod:`tools.vlm_client`):
 
@@ -57,10 +57,6 @@ Output B:
 ---
 
 Respond with JSON only: {{"winner": "A"|"B"|"tie", "reason": "brief explanation"}}"""
-
-INITIAL_ELO = 1500
-K = 32
-
 
 # ------------------------------------------------------------------
 # Parsing
@@ -129,35 +125,6 @@ def ocr_judge(
         max_tokens=512,
     )
     return _parse_verdict(response)
-
-
-def update_elo(
-    elo_a: float, elo_b: float, winner: str,
-) -> tuple[float, float]:
-    """Update ELO ratings given a pairwise outcome."""
-    expected_a = 1 / (1 + 10 ** ((elo_b - elo_a) / 400))
-    score_a = {"A": 1.0, "B": 0.0}.get(winner, 0.5)
-    elo_a += K * (score_a - expected_a)
-    elo_b += K * ((1 - score_a) - (1 - expected_a))
-    return elo_a, elo_b
-
-
-def elo_leaderboard(
-    results: list[dict],
-    model_names: list[str],
-) -> dict[str, float]:
-    """Compute ELO ratings from a list of comparison results.
-
-    Each result should have ``model_a``, ``model_b``, and ``winner``
-    keys (as returned by :func:`ocr_judge` wrapped with model info).
-
-    Returns a dict mapping model name -> ELO rating.
-    """
-    elo = {m: INITIAL_ELO for m in model_names}
-    for r in results:
-        a, b, w = r["model_a"], r["model_b"], r.get("winner", "tie")
-        elo[a], elo[b] = update_elo(elo[a], elo[b], w)
-    return dict(sorted(elo.items(), key=lambda x: -x[1]))
 
 
 # ------------------------------------------------------------------

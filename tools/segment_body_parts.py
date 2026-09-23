@@ -40,7 +40,6 @@ BODY_PARTS: list[tuple[str, tuple[int, int, int]]] = [
     ("Tongue", (82, 21, 114)),
 ]
 PART_NAMES: list[str] = [name for name, _ in BODY_PARTS]
-PALETTE: np.ndarray = np.array([color for _, color in BODY_PARTS], dtype=np.uint8)
 
 
 def _load(model_id: str) -> tuple[Any, Any]:

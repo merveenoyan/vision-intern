@@ -36,7 +36,7 @@ the ``HF_TOKEN`` / ``OPENAI_API_KEY`` env fallback already in
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 
 ROLES = ("default", "labeller", "judge")
 
@@ -50,12 +50,6 @@ class ToolConfig:
     model_id: str | None = None
     base_url: str | None = None
     api_key: str | None = None
-
-    def merge(self, **overrides: object) -> "ToolConfig":
-        """Return a copy with non-``None`` *overrides* applied."""
-        clean = {k: v for k, v in overrides.items() if v is not None}
-        return replace(self, **clean)
-
 
 def _from_env() -> ToolConfig:
     return ToolConfig(
