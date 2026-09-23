@@ -1,8 +1,16 @@
-# vision-agent
+# vision-intern
 
-A Python toolkit for building vision pipelines: label datasets with VLMs,
-evaluate annotations with a VLM-as-judge, and train object detection models —
-all from a few function calls.
+This is the project in the [AI Engineer talk here](https://www.youtube.com/watch?v=dKcTBQzR7jI).
+
+A Python toolkit for building vision pipelines: has my favorite models from human keypoint detection to zero-shot segmentation
+as tools for your agents, you can give this tool to your agents to label datasets with VLMs, evaluate annotations with a VLM-as-judge, and train models — all from a few function calls.
+
+<img width="2084" height="904" alt="image" src="https://github.com/user-attachments/assets/dc5c2189-0a3c-4701-a32c-8df801bda3d8" />
+
+## Current Limitations
+
+- Training lacks segmentation support.
+- If you have a use case with a lot of instances of an object to be detected it may not work. (This is experimental)
 
 ## Recommended architecture (model roles)
 
