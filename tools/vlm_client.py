@@ -24,6 +24,8 @@ from typing import Any
 
 from PIL import Image
 
+from .model_options import structured_output_template_kwargs
+
 # Cached OpenAI clients keyed by (base_url, api_key).
 _openai_clients: dict[tuple[str, str], Any] = {}
 _client_lock = threading.Lock()
@@ -102,6 +104,9 @@ def _run_openai(
     client = _get_client(base_url, api_key)
 
     data_url = _pil_to_data_url(image)
+    template_kwargs = structured_output_template_kwargs(model_id)
+    request_kwargs = ({"extra_body": {"chat_template_kwargs": template_kwargs}}
+                      if template_kwargs else {})
 
     last_err: Exception | None = None
     for attempt in range(3):
@@ -117,6 +122,7 @@ def _run_openai(
                 }],
                 max_tokens=max_tokens,
                 temperature=0,
+                **request_kwargs,
             )
             return response.choices[0].message.content or ""
         except Exception as e:
@@ -154,7 +160,7 @@ def _run_transformers_batch(
     """Generate for a *batch* of (image, prompt) pairs in one forward pass.
 
     This is the throughput path for the GPU judge jobs: the small judge models
-    (e.g. ``LiquidAI/LFM2.5-VL-1.6B``, ``google/gemma-4-E4B-it``) are not on HF
+    (e.g. ``LiquidAI/LFM3-VL-2B``, ``google/gemma-4-E4B-it``) are not on HF
     Inference Providers, so they run locally with ``transformers`` — feeding one
     image at a time wastes the GPU.
 
@@ -185,6 +191,7 @@ def _run_transformers_batch(
         return_tensors="pt",
         padding=True,
         padding_side="left",
+        **structured_output_template_kwargs(model_id),
     ).to(model.device)
 
     with torch.inference_mode():

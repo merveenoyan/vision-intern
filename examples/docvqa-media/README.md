@@ -21,13 +21,17 @@ so a VLM proposes boxes and an ensemble of smaller VLMs verifies them.
 table,image,chart,diagram,figure
 ```
 
+The recommendations and commands below now use LFM3-VL-2B. Existing output
+artifacts and recorded results were produced before this upgrade; they are not
+LFM3 benchmarks. Re-run judging and evaluation to compare the new model.
+
 ## Models per role
 | Role | Model | Family | Size | Where |
 |---|---|---|---|---|
 | Orchestrator | (the driving agent) | — | — | issues the job calls, never labels/judges |
 | Labeller | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | HF Inference Providers (router), CPU job |
 | Judge A | `google/gemma-4-E4B-it` | Google | 8.0B | `l4x1` GPU job |
-| Judge B | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` GPU job |
+| Judge B | `LiquidAI/LFM3-VL-2B` | Liquid | 1.92B | `l4x1` GPU job |
 | Train | `Roboflow/rf-detr-large` | — | — | `l40sx1` GPU job |
 
 Why this wiring: the labeller is the largest worker and the two judges are from

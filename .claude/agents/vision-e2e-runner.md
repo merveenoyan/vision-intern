@@ -42,7 +42,7 @@ descriptions.
   - **Labeller** `Qwen/Qwen3.5-9B` — *is* on HF Inference Providers, so it labels
     through the HF router (`--backend openai --base-url https://router.huggingface.co/v1`),
     no GPU. This is the only stage that uses the router.
-  - **Judges** `google/gemma-4-E4B-it` + `LiquidAI/LFM2.5-VL-1.6B` (different
+  - **Judges** `google/gemma-4-E4B-it` + `LiquidAI/LFM3-VL-2B` (different
     families, both smaller than the labeller). These are **small models with no
     HF Inference Provider**, so they do **not** run through the router — they run
     **on HF Jobs with the `transformers` backend on a GPU, batched**
@@ -99,7 +99,7 @@ non-empty definition (if not, drop back to Phase 1 and say so).
      --dataset <labeled_dataset> --split train --batch-size 8 \
      --class-descriptions <descriptions_file> --out $DIR/verdicts_gemma.parquet
    hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
-     jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
+     jobs/judge_one.py -- --model LiquidAI/LFM3-VL-2B \
      --dataset <labeled_dataset> --split train --batch-size 16 \
      --class-descriptions <descriptions_file> --out $DIR/verdicts_lfm.parquet
    ```
@@ -114,7 +114,7 @@ non-empty definition (if not, drop back to Phase 1 and say so).
        jobs/merge_judges.py -- --dataset <labeled_dataset> --split train \
        --output <judged_output>-agree$AG \
        --verdicts "google/gemma-4-E4B-it::$DIR/verdicts_gemma.parquet" \
-       --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
+       --verdicts "LiquidAI/LFM3-VL-2B::$DIR/verdicts_lfm.parquet" \
        --min-agree $AG --max-area-frac 0.9
    done
    ```
@@ -149,7 +149,7 @@ dataset/model/class set silently — if something is unavailable, say so and sto
 
 ## HF Jobs flavor allocation (match the bottleneck, not the stage)
 - **Large judge** (~8B VLM over thousands of images — the long pole) → `l40sx1`.
-- **Small judge** (≤2B, e.g. LFM-1.6B) → `l4x1`.
+- **Small judge** (≤2B, e.g. LFM3-VL-2B) → `l4x1`.
 - **RF-DETR training** (default rf-detr-large, ~20 epochs) on a small curated set
   → `l4x1` works; bump to `l40sx1` for 30+ epochs / long runs.
 - **CPU stages** (router labelling, merge) → `cpu-upgrade`.

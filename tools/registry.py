@@ -66,6 +66,14 @@ class ToolSpec:
 _VLM_HIDDEN = {"backend", "base_url", "api_key", "model_id"}
 
 _ENTRIES: list[dict] = [
+    {"name": "d1_decide", "module": "tools.d1", "attr": "d1_decide",
+     "hidden": {"model_id"}, "role": "default", "requires_train": True},
+    {"name": "d1_detect", "module": "tools.d1", "attr": "d1_detect",
+     "hidden": {"model_id"}, "role": "default", "requires_train": True},
+
+    {"name": "d1_review", "module": "tools.d1", "attr": "d1_review",
+     "hidden": {"model_id"}, "role": "judge", "requires_train": True},
+
     # --- VLM tools (openai backend → no torch needed) ---
     {"name": "vlm_detect", "module": "tools.vlm_detect", "attr": "vlm_detect",
      "hidden": _VLM_HIDDEN, "role": "default", "requires_train": False},

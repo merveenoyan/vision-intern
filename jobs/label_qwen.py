@@ -9,17 +9,17 @@
 #   "numpy",
 # ]
 # ///
-"""HF Job — STAGE 1 (Qwen variant): label DocVQA media with Qwen3.5-9B.
+"""HF Job — Qwen labelling through the shared vision harness.
 
-Qwen uses the prompt-based ``bbox_2d`` (0-1000) detection convention, which
-gives tight per-object boxes — unlike moondream's page-spanning output on
-scanned documents. Qwen3.5-9B has live HF Inference Providers, so we label
-through the HF router (``openai`` backend) on a cheap CPU job instead of loading
-9.6B on a GPU. Reuses ``workflows.vlm_label.label_dataset`` (viz-on-push built
-in).
+Model options include Qwen/Qwen3.5-9B (default), Qwen/Qwen3.6-35B-A3B,
+and Qwen/Qwen3.8-27B. Select either
+newer model with --model, and use a provider or OpenAI-compatible endpoint
+that supports image input and chat_template_kwargs. Provider availability
+must be checked before a run. No new-model detection benchmark is implied.
 
     hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN \
-      -e REPO_REF=multimodel-jobs jobs/label_qwen.py -- --max-samples 20
+      -e REPO_REF=multimodel-jobs jobs/label_qwen.py -- \
+      --model Qwen/Qwen3.6-35B-A3B --max-samples 20
 """
 
 from __future__ import annotations
@@ -40,6 +40,8 @@ if not REPO_DIR.exists():
                     REPO_URL, str(REPO_DIR)], check=True)
 sys.path.insert(0, str(REPO_DIR))
 
+from tools.model_options import QWEN_LABEL_MODELS
+
 
 def main() -> None:
     p = argparse.ArgumentParser()
@@ -47,7 +49,8 @@ def main() -> None:
     p.add_argument("--dataset-config", default="DocVQA")
     p.add_argument("--split", default="test")
     p.add_argument("--classes", default="table,image,chart,diagram,figure")
-    p.add_argument("--model", default="Qwen/Qwen3.5-9B")
+    p.add_argument("--model", default="Qwen/Qwen3.5-9B",
+                   help="Model ID; labeller options: " + ", ".join(QWEN_LABEL_MODELS))
     p.add_argument("--output", default="merve/docvqa-media-labeled-qwen")
     p.add_argument("--backend", default="openai", choices=["openai", "transformers"])
     p.add_argument("--base-url", default=None, help="Defaults to the HF router")

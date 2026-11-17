@@ -6,16 +6,19 @@ judges):
 
 | Stage | Script | Model | Family | Size | Flavor |
 |---|---|---|---|---|---|
-| 1 Label | `label_qwen.py` | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | `cpu-upgrade`¹ |
+| 1 Label option | `label_qwen.py --model Qwen/Qwen3.6-35B-A3B` | `Qwen/Qwen3.6-35B-A3B` | Qwen | 35B-A3B | remote endpoint¹ |
+| 1 Label option | `label_qwen.py --model Qwen/Qwen3.8-27B` | `Qwen/Qwen3.8-27B` | Qwen | 27B model | remote endpoint¹ |
+| 1 Label option (default) | `label_qwen.py` | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | `cpu-upgrade`¹ |
 | 2 Judge A | `judge_one.py` | `google/gemma-4-E4B-it` | Google | 8.0B | `l40sx1`² |
-| 2 Judge B | `judge_one.py` | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1`² |
+| 2 Judge B | `judge_one.py` | `LiquidAI/LFM3-VL-2B` | Liquid | 1.92B | `l4x1`² |
+| 2 Judge B alternative | `judge_one.py` | `LiquidAI/d1-Omni-2B` | Liquid | 2B | GPU |
 | 3 Merge | `merge_judges.py` | — (ensemble) | — | — | `cpu-upgrade` |
 | 4 Train | `train_rfdetr_job.py` | `Roboflow/rf-detr-large` | — | — | `l4x1`² |
 
 > **² Pick the flavor by the compute bottleneck, not the stage name.** The
 > heavy step is **judging with the larger VLM** (an 8B judge over ~1.4K images is
 > the long pole) — give *that* the big GPU (`l40sx1`). A **small judge**
-> (≤2B, e.g. LFM-1.6B) runs fine on `l4x1`. **RF-DETR training on a small
+> (≤2B, e.g. LFM3-VL-2B) runs fine on `l4x1`. **RF-DETR training on a small
 > curated set** (~1–2K images, ~20 epochs) is light and single-GPU — `l4x1` is
 > plenty; reserve `l40sx1`/multi-GPU for large datasets or long schedules. So in
 > practice the big GPU goes to the *large judge*, not to training. CPU stages
@@ -39,6 +42,19 @@ per-object `bbox_2d` (0-1000) prompt (`tools/vlm_detect`), giving tight boxes
 > page-spanning boxes on *scanned document pages* (median area ≈ 0.98), which is
 > why this DocVQA run uses Qwen's tight `bbox_2d` boxes instead.
 
+The newer Qwen options request non-thinking structured output. Select an
+image-capable provider or self-hosted OpenAI-compatible server that accepts
+`chat_template_kwargs`; provider availability is not guaranteed. The existing
+Qwen3.5-9B default and historical benchmark results remain unchanged.
+
+```bash
+REPO_DIR=$(pwd) uv run jobs/label_qwen.py \
+  --model Qwen/Qwen3.6-35B-A3B --base-url http://localhost:8000/v1 --max-samples 20
+# Alternative: --model Qwen/Qwen3.8-27B
+```
+
+See the [model option notes](../README.md#newer-qwen-labeller-options).
+
 Each script clones this repo (`REPO_REF` env, default `multimodel-jobs`) for the
 shared `tools/` + `workflows/` helpers, so **push your branch before launching**.
 Intermediate verdicts pass between jobs through the bucket
@@ -52,8 +68,19 @@ Datasets / artifacts (separate from the originals):
 auto-generated box-overlay gallery (`viz/` + README), so boxes never need
 re-rendering.
 
+### Two judges, with d1 as an alternative
+
+Run exactly two judge jobs: Gemma + LFM3, or Gemma + d1. To select d1,
+replace `LiquidAI/LFM3-VL-2B` with `LiquidAI/d1-Omni-2B` in both the second
+judge command and its merge verdict label (use `verdicts_d1.parquet` for its
+output). Keep only two `--verdicts` arguments. d1 uses the local transformers
+adapter and scores sequentially rather than through generative batching.
+Use readable labels and omit `--class-descriptions` for d1.
+Standalone single-judge scoring is also supported; ensembles reject more than
+two judges before inference or artifact loading.
+
 ### How judging works (and its limits)
-The judge models (`google/gemma-4-E4B-it`, `LiquidAI/LFM2.5-VL-1.6B`) are small
+The judge models (`google/gemma-4-E4B-it`, `LiquidAI/LFM3-VL-2B`) are small
 and **have no HF Inference Provider**, so the judge job loads them locally with
 the `transformers` backend on the GPU and runs **batched** inference
 (`--batch-size` images per `generate()` call — `run_vlm_batch` /
@@ -133,7 +160,7 @@ hf jobs uv run --flavor l40sx1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
   jobs/judge_one.py -- --model google/gemma-4-E4B-it --batch-size 8 \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_gemma.parquet
 hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h $BUCKET $REF -d \
-  jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B --batch-size 16 \
+  jobs/judge_one.py -- --model LiquidAI/LFM3-VL-2B --batch-size 16 \
   --dataset merve/docvqa-media-labeled-qwen --out $DIR/verdicts_lfm.parquet
 
 # 3 — merge (after both judges SUCCEEDED). ALWAYS emit BOTH ensemble policies as
@@ -145,7 +172,7 @@ hf jobs uv run --flavor cpu-upgrade --secrets HF_TOKEN $BUCKET $REF -d \
   jobs/merge_judges.py -- --dataset merve/docvqa-media-labeled-qwen \
   --output merve/docvqa-media-judged-ensemble-agree$AG \
   --verdicts "google/gemma-4-E4B-it::$DIR/verdicts_gemma.parquet" \
-  --verdicts "LiquidAI/LFM2.5-VL-1.6B::$DIR/verdicts_lfm.parquet" \
+  --verdicts "LiquidAI/LFM3-VL-2B::$DIR/verdicts_lfm.parquet" \
   --min-agree $AG --max-area-frac 0.9
 done
 
@@ -173,3 +200,11 @@ hf buckets ls merve/vision-agent-runs/docvqa-qwen -h        # check artifacts
 ```
 Each stage prints `STAGE N DONE` on success — grep logs for that plus
 `Traceback|Error|OOM|Killed` to catch failures.
+
+### LFM3-VL compatibility
+
+The Liquid judge recommendation is now `LiquidAI/LFM3-VL-2B` (1.92B).
+Use `transformers>=5.21.0`; the judge job declares this minimum. The existing
+Hub artifacts predate this upgrade. Smoke-test accuracy, token budget, and
+batch size before a full run: LFM3 emits reasoning before its final answer.
+The judge uses a 16,384-token budget for LFM3 and parses only its final answer.

@@ -5,7 +5,7 @@ A Python toolkit for **VLM-driven object-detection pipelines**, meant to be
 *driven by an orchestrating agent*. Three stages:
 
 1. **Label** a dataset with a VLM (open-vocabulary detection from class names).
-2. **Judge** the labels with one or more smaller VLMs-as-judge + cheap geometric
+2. **Judge** the labels with two smaller VLMs-as-judge + cheap geometric
    checks, and keep an auditable verdict per box.
 3. **Train** a detection model (RF-DETR by default) on the curated result.
 
@@ -29,7 +29,7 @@ processes/endpoints, and **never pass the orchestrator as a worker `model_id`**:
 |---|---|---|---|
 | **Orchestrator** | ~10-30B (thinking) | Drives/babysits the run, fixes errors, decides next steps. **Never labels or judges itself.** | Runs inference inside the orchestrator process thrashes its KV cache and degrades the agent supervising the run. |
 | **Labeller** | the largest worker | Proposes detections on each image. | One model; labelling is the hard generative task, so give it the most capacity. |
-| **Judge(s)** | smaller than the labeller | Score/verify the labeller's boxes. | Use **2+ judges of different families** for an ensemble/voting signal. Pluggable via `model_id` (+ optional `base_url`). |
+| **Judge(s)** | smaller than the labeller | Score/verify the labeller's boxes. | Use **two judges of different families** for an ensemble/voting signal. Pluggable via `model_id` (+ optional `base_url`). |
 
 Rules that hold regardless of which specific models you pick:
 - **Labeller strictly larger than every judge.**
@@ -39,7 +39,8 @@ Rules that hold regardless of which specific models you pick:
 
 The specific models are a per-run choice. The reference run on the
 `multimodel-jobs` branch uses a Qwen labeller with Google-Gemma + LiquidAI-LFM
-judges on HF Jobs — see `jobs/README.md` for that concrete wiring and the model
+judges on HF Jobs. d1-Omni-2B can replace LFM3 in the second slot; do not
+add a third judge. Standalone single-judge scoring remains supported. See `jobs/README.md` for that concrete wiring and the model
 cards' detection-prompt differences.
 
 ## Environment & setup

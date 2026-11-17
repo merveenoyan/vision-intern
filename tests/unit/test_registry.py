@@ -207,3 +207,36 @@ def test_build_schema_is_pure():
     a = _build_schema(get_tool("convert_bbox").fn, frozenset())
     b = _build_schema(get_tool("convert_bbox").fn, frozenset())
     assert a == b
+
+
+def test_d1_agent_tool_schema_and_dispatch(monkeypatch):
+    spec = get_tool("d1_decide")
+    assert "d1_decide" in list_tools(include_train=True)
+    assert set(spec.parameters["required"]) == {"image", "questions"}
+    assert "model_id" not in spec.parameters["properties"]
+    assert "instructions" in spec.parameters["properties"]["questions"]["description"]
+    questions = {"total": {"type": "number", "instructions": "Total due?"}}
+    expected = {"answers": {"total": {"number": 42.5, "found": .99}}}
+
+    def decide(image, questions, state=None, model_id=None):
+        assert image is None
+        assert state == "Total due: 42.50 EUR"
+        assert questions["total"]["type"] == "number"
+        return expected
+
+    monkeypatch.setattr(spec, "fn", decide)
+    assert call("d1_decide", image=None, state="Total due: 42.50 EUR",
+                questions=questions) == expected
+
+
+def test_d1_review_agent_schema_and_judge_config(monkeypatch):
+    spec = get_tool("d1_review")
+    assert "d1_review" in list_tools(include_train=True)
+    assert "d1_review" not in list_tools(include_train=False)
+    assert set(spec.parameters["required"]) == {"image", "detections"}
+    assert "label_aliases" in spec.parameters["properties"]
+    assert "class_descriptions" not in spec.parameters["properties"]
+    assert "model_id" not in spec.parameters["properties"]
+    config.configure(judge=config.ToolConfig(model_id="LiquidAI/d1-Omni-2B"))
+    monkeypatch.setattr(spec, "fn", lambda image, detections, model_id=None, **kw: model_id)
+    assert call("d1_review", image="x", detections=[]) == "LiquidAI/d1-Omni-2B"

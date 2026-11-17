@@ -5,7 +5,8 @@ This is the project in the [AI Engineer talk here](https://www.youtube.com/watch
 A Python toolkit for building vision pipelines: has my favorite models from human keypoint detection to zero-shot segmentation
 as tools for your agents, you can give this tool to your agents to label datasets with VLMs, evaluate annotations with a VLM-as-judge, and train models — all from a few function calls.
 
-<img width="2084" height="904" alt="image" src="https://github.com/user-attachments/assets/dc5c2189-0a3c-4701-a32c-8df801bda3d8" />
+
+![Updated vision-agent pipeline](pipeline.png)
 
 ## Current Limitations
 
@@ -19,9 +20,9 @@ separate processes/endpoints — do not collapse them into one model.
 
 | Role | Size | What it does | Where it runs |
 |---|---|---|---|
-| **Orchestrator** | ~10-12B (thinking) | Drives the workflow, babysits the run, fixes errors, decides next steps. **Never labels or judges itself.** | The agent/subagent |
-| **Labeller** | ~7B-8B VLM | Generates detections on the dataset (one model, the larger of the workers). | Remote (HF Inference Providers) or local server, it costs $0.5/1k images |
-| **Judges** | 2-5B VLMs (several) | Score/verify the labeller's detections. Use multiple small judges for an ensemble/voting signal. | Remote or local servers |
+| **Orchestrator** | At least 27B+ (thinking) or your favorite agent (Codex, CC) | Drives the workflow, babysits the run, fixes errors, decides next steps. **Never labels or judges itself.** | The agent/subagent |
+| **Labeller** | >9B VLM | Generates detections on the dataset (one model, the larger of the workers). | Remote (HF Inference Providers) or local server, it costs $0.5/1k images |
+| **Judges** | Two smaller VLMs | Score/verify the labeller's detections. Use two judges for an ensemble/voting signal. | Remote or local servers |
 
 Why the separation matters:
 
@@ -33,7 +34,7 @@ Why the separation matters:
   so give it the larger worker (~7B). Judging each detection is a narrower
   verification task that smaller models (4-5B) handle well and cheaply.
 - **Judges are pluggable and parallelizable.** Because the judge step takes a
-  `model_id` (and optional `base_url`), you can run several small judges and
+  `model_id` (and optional `base_url`), you can run two small judges and
   combine their verdicts, rather than relying on a single large model.
 
 Concretely, in the `label_dataset` / `judge_labels` / `train` calls:
@@ -44,6 +45,8 @@ Concretely, in the `label_dataset` / `judge_labels` / `train` calls:
   calls and monitors progress — it should never be passed as a `model_id`.
 
 ## Install
+
+Python 3.11 or newer is required (the project pins Python 3.12).
 
 This is a [`uv`](https://docs.astral.sh/uv/) project:
 
@@ -145,8 +148,8 @@ Supported input formats (auto-detected):
   (and optional `val/`).
 
 Any `AutoModelForObjectDetection` checkpoint works (RF-DETR, DETR, etc.); the
-default is `Roboflow/rf-detr-large`. RF-DETR requires `transformers>=5.10` and
-`timm`.
+default is `Roboflow/rf-detr-large`. Local inference and training require
+`transformers>=5.21` (for LFM3-VL); RF-DETR also uses `timm`.
 
 **Augmentation is use-case dependent.** It defaults on (`augment=True`), but for
 clean/uniform imagery or already-tight labels it can *hurt* — e.g. road-signs
@@ -183,7 +186,7 @@ boxes = va.call("vlm_detect", image="photo.jpg", classes=["person", "car"])
 ```
 
 `configure()` accepts `default` (VLM tools), `labeller` (`label_dataset`), and
-`judge` (`judge_labels`) roles. Any `ToolConfig` field left `None` falls through
+`judge` (`judge_labels`, `d1_review`) roles. Any `ToolConfig` field left `None` falls through
 to the function's own default (`model_id`), the HF Inference Providers URL
 (`base_url`), or the `HF_TOKEN` / `OPENAI_API_KEY` env fallback (`api_key`). The
 same three can be set via `VISION_AGENT_BACKEND` / `VISION_AGENT_MODEL` /
@@ -246,7 +249,7 @@ vlm_detect(
 | `estimate_pose` | Sapiens2 — dense 308-keypoint human pose |
 | `grounded_detect` | MM-Grounding-DINO — open-vocabulary detection |
 | `fast_segment` | EdgeTAM — lightweight bbox to mask |
-| `ocr` | PaddleOCR-VL — vision-language OCR |
+| `ocr` | Selectable OCR models, including LightOnOCR-3-0.8B (`size="lighton"`) |
 | `vlm_detect` | VLM instruction-prompted detection (any VLM) |
 | `ocr_judge` | Pairwise OCR quality evaluation with a VLM-as-judge |
 | `convert_bbox` | Convert bboxes between 6 formats |
@@ -254,6 +257,139 @@ vlm_detect(
 | `compute_stats` | Statistics for COCO annotation files |
 | `annotate` | supervision-backed box + mask visualization (per-class / per-track colours) |
 | `track_video` | Roboflow trackers + supervision multi-object tracking (boxes or instance masks) |
+
+### LightOnOCR
+
+Use [LightOnOCR-3-0.8B](https://huggingface.co/lightonai/LightOnOCR-3-0.8B)
+with the `train` extra installed. The default prompt transcribes the image;
+`grounding` adds labeled layout boxes (coordinates normalized to 0–1000) in
+its text output. The return format remains `{"text": ..., "model": ...}`.
+
+```python
+from tools import ocr
+
+text = ocr("page.png", size="lighton")
+layout = ocr("page.png", size="lighton", prompt="grounding")
+```
+
+### Newer Qwen labeller options
+
+All three models are selectable through the existing `model_id` API and `--model`
+CLI argument. Existing defaults remain unchanged; these are additional options,
+not new detection-quality benchmarks.
+
+| Model option | Model card | Role |
+|---|---|---|
+| `Qwen/Qwen3.5-9B` | [Official card](https://huggingface.co/Qwen/Qwen3.5-9B) | Qwen labeller; default in `label_qwen.py` |
+| `Qwen/Qwen3.6-35B-A3B` | [Official card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) | Image-capable Qwen labeller |
+| `Qwen/Qwen3.8-27B` | [Official card](https://huggingface.co/Qwen/Qwen3.8-27B) | Image-capable Qwen labeller |
+
+```python
+from tools import vlm_detect
+
+boxes = vlm_detect(
+    "road.jpg",
+    classes=["stop sign", "no entry sign"],
+    model_id="Qwen/Qwen3.8-27B",  # Or Qwen/Qwen3.6-35B-A3B
+    backend="openai",
+    base_url="http://localhost:8000/v1",
+)
+```
+
+The shared client requests non-thinking output for Qwen3.6 and Qwen3.8, using
+`enable_thinking=False` locally and `chat_template_kwargs` on compatible
+OpenAI-style endpoints. This keeps the token budget focused on the requested
+box JSON. The detection parser also excludes `<think>` blocks and returns no
+boxes from unfinished reasoning. A provider must support images and this
+request option; check provider availability before selecting the HF router.
+Use current Transformers/serving packages as described in the linked model
+cards. The large checkpoints need appropriately sized inference hardware;
+a CPU labelling job works only when inference is served remotely.
+
+Use the same model IDs with `label_dataset`, agent role configuration, or
+`jobs/label_qwen.py --model ...`. Discover the explicit options in
+`tools.model_options.QWEN_LABEL_MODELS`. No hosted inference or GPU benchmark
+of these new labellers was performed as part of adding the options.
+
+### Recommended Liquid judge
+
+Use [LiquidAI/LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B)
+(1.92B parameters) as the small Liquid judge. Local inference requires
+`transformers>=5.21.0` and uses the existing auto-model loader with custom-code
+support. Re-evaluate judge accuracy and throughput when upgrading: recorded
+example results predate this recommendation.
+
+### System One labeling and judging
+
+[`LiquidAI/d1-Omni-2B`](https://huggingface.co/LiquidAI/d1-Omni-2B) is supported
+through its typed `system_one()` API with `backend="transformers"`. Set that
+model ID in `label_dataset` / `judge_labels`, or call `d1_detect` / `d1_decide`
+directly. Detection requires explicit classes; judges see numbered box overlays.
+
+### d1 as an agent tool
+
+`d1_decide` is a standalone inference tool for document field extraction,
+classification, yes/no decisions, and image questions. Like the other local
+model tools, it loads weights lazily, caches them, and returns dictionaries.
+
+```python
+from tools import call, get_tool
+
+spec = get_tool("d1_decide").as_dict()  # Agent schema; no model load.
+result = call(
+    "d1_decide",
+    image=None,
+    state="ACME Ltd\nInvoice date: 2026-11-17\nTotal due: 42.50 EUR",
+    questions={
+        "company": {"type": "text", "instructions": "Who issued the invoice?"},
+        "date": {"type": "date", "instructions": "What is the invoice date?"},
+        "total": {"type": "number", "instructions": "What is the total due?"},
+    },
+)
+print(result["answers"])
+```
+
+Include it in discovery with `get_tools(include_train=True)` or
+`as_json_schema(include_train=True)`. The `train` extra supplies local inference
+dependencies; calling this tool does not train a model. Direct Python calls are
+also available via `from tools import d1_decide`.
+
+The default model is `LiquidAI/d1-Omni-2B`; the registry can override it through
+the default worker's `ToolConfig.model_id`. Extraction reads supplied text,
+not image pixels, and returns typed values, spans, and `found` probabilities.
+`found` measures presence, not correctness.
+
+### d1 as a conservative judge option
+
+Use `d1_review` to review proposed boxes with `LiquidAI/d1-Omni-2B`. It draws
+numbered overlays from the original image, uses readable display names, and
+supplies **no class descriptions**. It returns every box's verdict and score;
+it does not remove detections or change their labels. Treat rejections as
+review flags or one of the two ensemble votes. The standard pair is Gemma +
+LFM3; choose Gemma + d1 to use d1 instead of LFM3. Do not add a third judge.
+
+```python
+from tools import call, configure, get_tool, ToolConfig
+
+configure(judge=ToolConfig(model_id="LiquidAI/d1-Omni-2B"))
+schema = get_tool("d1_review").as_dict()
+aliases = {"enter_left_lane": "enter left lane"}
+verdicts = call(
+    "d1_review",
+    image="road.jpg",  # Original image, before drawing boxes.
+    detections=[{"label": "enter_left_lane", "bbox": [10, 20, 100, 150]}],
+    label_aliases=aliases,
+)
+```
+
+The direct Python equivalent is `from tools import d1_review`. Agent discovery
+requires `get_tools(include_train=True)` or `as_json_schema(include_train=True)`;
+local inference uses the `train` dependency extra. Aliases are optional:
+unmapped labels have underscores replaced with spaces, but abbreviations need
+an explicit mapping. Output indices refer to the original detection order.
+The existing workflow also accepts `model_id="LiquidAI/d1-Omni-2B"` with
+`backend="transformers"`; use `class_descriptions={}` to disable descriptions.
+That filtering workflow has its own retention policy; `d1_review` only scores.
 
 ## Workflows reference
 

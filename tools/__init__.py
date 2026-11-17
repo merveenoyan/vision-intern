@@ -25,7 +25,7 @@ estimate_surface_normals  Sapiens2 — human surface normal estimation
 matte_human         Sapiens2 — human image matting (alpha + foreground)
 grounded_detect     MM-Grounding-DINO — open-vocab detection (size: tiny/large)
 fast_segment        EdgeTAM — lightweight bbox → mask (faster than SAM3)
-ocr                 Vision-language OCR (size: large/medium/small)
+ocr                 Vision-language OCR (large/medium/small/mini/lighton presets)
 vlm_detect          VLM instruction-prompted detection (free-form prompts)
 ocr_judge           Pairwise OCR quality evaluation (VLM-as-judge)
 convert_bbox        Convert bboxes between 6 formats (coco/xyxy/yolo/voc/tfod/ls)
@@ -53,6 +53,10 @@ import importlib
 # (e.g. ``tools.hub_viz``, ``tools.bbox_viz``) does not pull torch-heavy tools.
 # ``from tools import detect`` still works — it triggers the import on access.
 _LAZY = {
+    "d1_decide": "d1",
+    "d1_detect": "d1",
+    "d1_judge": "d1",
+    "d1_review": "d1",
     "detect": "detect",
     "instance_segment": "instance_segment",
     "segment_from_bbox": "segment_from_bbox",
@@ -105,6 +109,7 @@ def __dir__():
 
 
 __all__ = [
+    "d1_decide", "d1_detect", "d1_judge", "d1_review",
     "detect",
     "instance_segment",
     "segment_from_bbox",

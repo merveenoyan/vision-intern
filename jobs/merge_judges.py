@@ -20,7 +20,7 @@ the ensemble policy, and pushes the judged dataset with a box-overlay gallery.
       -v hf://buckets/merve/vision-agent-runs:/data -e REPO_REF=multimodel-jobs \
       jobs/merge_judges.py -- \
       --verdicts "google/gemma-4-E4B-it::/data/docvqa-moondream/verdicts_gemma.parquet" \
-      --verdicts "LiquidAI/LFM2.5-VL-1.6B::/data/docvqa-moondream/verdicts_lfm.parquet" \
+      --verdicts "LiquidAI/LFM3-VL-2B::/data/docvqa-moondream/verdicts_lfm.parquet" \
       --min-agree 1 --max-samples 20
 """
 
@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--detections-column", default="detections")
     p.add_argument("--output", default="merve/docvqa-media-judged-ensemble")
     p.add_argument("--verdicts", action="append", required=True,
-                   help="Repeatable 'label::parquet_path' pair, one per judge. "
+                   help="Repeatable 'label::parquet_path' pair, at most two judges. "
                         "A relative path resolves under the data root; an "
                         "absolute path or hf:// URI is used as-is.")
     p.add_argument("--data-root", default=None,
@@ -73,7 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    from tools.model_options import validate_judge_count
+    try:
+        validate_judge_count(len(args.verdicts))
+    except ValueError as exc:
+        parser.error(str(exc))
 
     from datasets import load_dataset
 

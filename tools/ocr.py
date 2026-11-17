@@ -1,9 +1,10 @@
 """Vision-language OCR with selectable model size.
 
-Four models, keyed by *size*:
+Models, keyed by *size* (or the explicit "lighton" preset):
     "large"  → datalab-to/chandra-ocr-2     (~5.3B, AutoModelForMultimodalLM)
     "medium" → rednote-hilab/dots.mocr       (~3B,  AutoModelForCausalLM, custom code)
     "small"  → datalab-to/surya-ocr-2        (~686M, AutoModelForMultimodalLM)
+    "lighton" → lightonai/LightOnOCR-3-0.8B (~0.8B, Qwen3_5ForConditionalGeneration)
     "mini"   → PaddlePaddle/PaddleOCR-VL-1.6 (~0.9B, PaddleOCRVLForConditionalGeneration)
 """
 from __future__ import annotations
@@ -20,16 +21,18 @@ from .utils import get_or_load, load_image
 #   "dots"          — dots.mocr: AutoModelForCausalLM + qwen_vl_utils vision processing
 #   "paddle"        — PaddleOCR-VL: PaddleOCRVLForConditionalGeneration, same chat flow
 MODELS: dict[str, dict[str, str]] = {
+    "lighton": {"id": "lightonai/LightOnOCR-3-0.8B", "kind": "lighton"},
     "large": {"id": "datalab-to/chandra-ocr-2", "kind": "multimodal_lm"},
     "medium": {"id": "rednote-hilab/dots.mocr", "kind": "dots"},
     "small": {"id": "datalab-to/surya-ocr-2", "kind": "multimodal_lm"},
     "mini": {"id": "PaddlePaddle/PaddleOCR-VL-1.6", "kind": "paddle"},
 }
 
-# dots.mocr ships a layout-aware prompt; the other models take a bare "OCR:".
+# LightOnOCR uses an image-only prompt; dots.mocr uses a layout instruction.
 _DEFAULT_PROMPTS = {
     "multimodal_lm": "OCR:",
     "paddle": "OCR:",
+    "lighton": "",
     "dots": "Please output the layout information from the image, including bounding "
             "boxes and text content, as markdown.",
 }
@@ -57,6 +60,17 @@ def _load_paddle(model_id: str) -> tuple[Any, Any]:
     return model, processor
 
 
+def _load_lighton(model_id: str) -> tuple[Any, Any]:
+    from transformers import AutoProcessor, Qwen3_5ForConditionalGeneration
+
+    processor = AutoProcessor.from_pretrained(model_id)
+    model = Qwen3_5ForConditionalGeneration.from_pretrained(
+        model_id, dtype=torch.bfloat16, device_map="auto"
+    )
+    model.eval()
+    return model, processor
+
+
 def _load_dots(model_id: str) -> tuple[Any, Any]:
     from transformers import AutoModelForCausalLM, AutoProcessor
 
@@ -68,7 +82,9 @@ def _load_dots(model_id: str) -> tuple[Any, Any]:
     return model, processor
 
 
-def _generate_multimodal_lm(model, processor, image, prompt, max_new_tokens) -> str:
+def _generate_multimodal_lm(
+    model, processor, image, prompt, max_new_tokens, *, lighton=False,
+) -> str:
     messages = [
         {
             "role": "user",
@@ -78,12 +94,16 @@ def _generate_multimodal_lm(model, processor, image, prompt, max_new_tokens) -> 
             ],
         }
     ]
+    if lighton and not prompt:
+        messages[0]["content"] = [{"type": "image", "image": image}]
+    template_kwargs = {"enable_thinking": False} if lighton else {}
     inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
         tokenize=True,
         return_dict=True,
         return_tensors="pt",
+        **template_kwargs,
     ).to(model.device)
     # Weights are bf16; cast only float tensors so integer inputs keep dtype.
     for k, v in inputs.items():
@@ -140,8 +160,9 @@ def ocr(
         image: input image (path, URL, or PIL Image)
         size: which model to use — "large" (chandra-ocr-2),
                "medium" (dots.mocr), "small" (surya-ocr-2),
-               or "mini" (PaddleOCR-VL-1.6)
-        prompt: instruction for the model; defaults to a size-appropriate prompt
+               "mini" (PaddleOCR-VL-1.6), or "lighton" (LightOnOCR-3-0.8B)
+        prompt: instruction for the model; defaults to a size-appropriate prompt.
+                LightOnOCR uses "" for transcription or "grounding" for layout output.
         max_new_tokens: generation budget (raise for dense, multi-page documents)
 
     Returns a dict with:
@@ -162,10 +183,13 @@ def ocr(
         model, processor = get_or_load(f"ocr_{size}", lambda: _load_dots(model_id))
         text = _generate_dots(model, processor, image, prompt, max_new_tokens)
     else:
-        # multimodal_lm (chandra/surya) and paddle share the chat-template flow;
-        # only the model class differs at load time.
-        loader = _load_paddle if kind == "paddle" else _load_multimodal_lm
+        # These models share the chat-template flow; LightOnOCR disables thinking.
+        loader = {"paddle": _load_paddle, "lighton": _load_lighton}.get(
+            kind, _load_multimodal_lm
+        )
         model, processor = get_or_load(f"ocr_{size}", lambda: loader(model_id))
-        text = _generate_multimodal_lm(model, processor, image, prompt, max_new_tokens)
+        text = _generate_multimodal_lm(
+            model, processor, image, prompt, max_new_tokens, lighton=kind == "lighton",
+        )
 
     return {"text": text, "model": model_id}

@@ -28,13 +28,17 @@ parking, ped_crossing, ped_zebra_cross, railway_crossing, red_light, stop,
 t_intersection_l, traffic_light, u_turn, warning, yellow_light
 ```
 
+The recommendations and commands below now use LFM3-VL-2B. Existing output
+artifacts and recorded results were produced before this upgrade; they are not
+LFM3 benchmarks. Re-run judging and evaluation to compare the new model.
+
 ## Models per role
 | Role | Model | Family | Size | Where |
 |---|---|---|---|---|
 | Orchestrator | the driving agent | — | — | issues calls, never labels/judges |
 | Labeller | `Qwen/Qwen3.5-9B` | Qwen | 9.65B | HF router (already run) |
 | Judge A | `google/gemma-4-E4B-it` | Google | 8.0B | `l40sx1` (the heavy judge — the long pole) |
-| Judge B | `LiquidAI/LFM2.5-VL-1.6B` | Liquid | 1.6B | `l4x1` (small judge) |
+| Judge B | `LiquidAI/LFM3-VL-2B` | Liquid | 1.92B | `l4x1` (small judge) |
 | Train | `Roboflow/rf-detr-large` | — | — | `l40sx1` (large model, 20–30 epochs) |
 
 ## Commands
@@ -57,7 +61,7 @@ uv run python -m workflows.gen_descriptions \
 for AG in 1 2; do
   uv run python -m workflows.vlm_judge --source merve/roadsign-labeled-qwen \
     --output merve/roadsign-judged-ensemble-agree$AG --push-to-hub \
-    --judges "google/gemma-4-E4B-it,LiquidAI/LFM2.5-VL-1.6B" \
+    --judges "google/gemma-4-E4B-it,LiquidAI/LFM3-VL-2B" \
     --backend openai --base-url https://router.huggingface.co/v1 \
     --class-descriptions descriptions.json --min-agree $AG --split train
 done

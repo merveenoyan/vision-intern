@@ -28,6 +28,7 @@ from typing import Any
 from PIL import Image
 from tqdm import tqdm
 
+from tools.model_options import validate_judge_count
 from tools.utils import load_image
 from tools.vlm_client import run_vlm, run_vlm_batch
 
@@ -237,6 +238,11 @@ def _build_judge_prompt_coco(
 
 
 def _parse_verdicts(text: str) -> dict[int, dict]:
+    # LFM3 reasons before answering; only the final answer contains verdicts.
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    elif "<think>" in text:
+        return {}  # Generation ended before a final answer.
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if not match:
         return {}
@@ -307,12 +313,17 @@ def score_detections(
         overlay_img = draw_detections(img, detections, show_index=True)
     elif not isinstance(overlay_img, Image.Image):
         overlay_img = load_image(overlay_img)
+    from tools.d1 import d1_judge, is_d1
+    if is_d1(model_id):
+        if backend != "transformers":
+            raise ValueError("d1 requires backend='transformers'")
+        return d1_judge(overlay_img, detections, model_id, class_descriptions)
     prompt = _build_judge_prompt_overlay(detections, class_descriptions)
     try:
         response = run_vlm(
             overlay_img, prompt, model_id,
             backend=backend, base_url=base_url, api_key=api_key,
-            max_tokens=1024,
+            max_tokens=16384 if "lfm3-vl" in model_id.lower() else 1024,
         )
     except Exception as e:  # noqa: BLE001 — a dead judge must not abort the run
         print(f"\n  [warn] judge {model_id} failed: {e}")
@@ -352,6 +363,13 @@ def score_detections_batch(
     judge so the small judge models run many images per ``generate`` call
     instead of one at a time.
     """
+    from tools.d1 import is_d1
+    if is_d1(model_id):
+        return [score_detections(img, dets, model_id, backend=backend,
+                                base_url=base_url, api_key=api_key,
+                                overlay_img=overlay, class_descriptions=class_descriptions)
+                for img, dets, overlay in items]
+
     results: list[list[dict] | None] = [None] * len(items)
 
     # Collect the images that actually have boxes to score; render overlays.
@@ -378,7 +396,7 @@ def score_detections_batch(
             responses = run_vlm_batch(
                 imgs, prompts, model_id,
                 backend=backend, base_url=base_url, api_key=api_key,
-                max_tokens=1024,
+                max_tokens=16384 if "lfm3-vl" in model_id.lower() else 1024,
             )
         except Exception as e:  # noqa: BLE001 — a dead judge must not abort the run
             print(f"\n  [warn] judge {model_id} batch failed: {e}")
@@ -401,6 +419,7 @@ def ensemble_row(
     entry per detection with per-judge breakdown, vote count, mean score and
     an ``ensemble_keep`` flag (``n_correct >= min_agree``).
     """
+    validate_judge_count(len(per_judge_row))
     out: list[dict] = []
     for i in range(n_dets):
         per_judge: dict[str, dict] = {}
@@ -440,6 +459,7 @@ def _normalize_judges(
     if not judges:
         return [{"model_id": model_id, "backend": backend,
                  "base_url": base_url, "api_key": api_key}]
+    validate_judge_count(len(judges))
     specs = []
     for j in judges:
         if isinstance(j, str):
@@ -487,21 +507,33 @@ def _judge_local(
             continue
 
         image = load_image(image_dir / img_info["file_name"])
-        prompt = _build_judge_prompt_coco(
-            anns, id2name, img_info["width"], img_info["height"],
-            class_descriptions,
-        )
-        response = run_vlm(
-            image, prompt, model_id,
-            backend=backend, base_url=base_url, api_key=api_key,
-            max_tokens=1024,
-        )
-        verdicts = _parse_verdicts(response)
-
+        from tools.d1 import is_d1
+        if is_d1(model_id):
+            dets = [{"label": id2name[a["category_id"]],
+                     "bbox": [a["bbox"][0], a["bbox"][1],
+                              a["bbox"][0] + a["bbox"][2],
+                              a["bbox"][1] + a["bbox"][3]]} for a in anns]
+            scored = score_detections(image, dets, model_id, backend=backend,
+                                      base_url=base_url, api_key=api_key,
+                                      class_descriptions=class_descriptions)
+            verdicts = {a["id"]: v for a, v in zip(anns, scored)}
+        else:
+            prompt = _build_judge_prompt_coco(
+                anns, id2name, img_info["width"], img_info["height"],
+                class_descriptions,
+            )
+            response = run_vlm(
+                image, prompt, model_id,
+                backend=backend, base_url=base_url, api_key=api_key,
+                max_tokens=16384 if "lfm3-vl" in model_id.lower() else 1024,
+            )
+            verdicts = _parse_verdicts(response)
         for ann in anns:
             v = verdicts.get(ann["id"], _NO_VERDICT)
             verdicts_log.append({"annotation_id": ann["id"], **v})
-            if v["score"] >= threshold:
+            if v["score"] >= threshold and (
+                not is_d1(model_id) or v["verdict"] == "correct"
+            ):
                 kept_anns.append(ann)
 
     filtered = {
@@ -649,7 +681,7 @@ def judge_labels(
     model_id : str
         Single-judge model identifier (used when *judges* is not given).
     judges : list, optional
-        Multiple judges for an **ensemble** (Hub mode).  Each entry is either
+        Two judges for an **ensemble** (Hub mode).  Each entry is either
         a bare model-id string (inheriting *backend*/*base_url*/*api_key*) or a
         dict ``{"model_id", "backend", "base_url", "api_key"}``.  Per-judge
         verdicts plus the ensemble vote are stored in ``judge_verdicts``.
@@ -692,7 +724,8 @@ def judge_labels(
     # Build the category definitions once: use what the caller supplied, else
     # have the first judge generate them from the user's *labels* via the
     # prompt-creation meta-prompt.  Reused across every image/judge in the run.
-    if class_descriptions is None and labels:
+    from tools.d1 import is_d1
+    if class_descriptions is None and labels and not is_d1(judge_specs[0]["model_id"]):
         first = judge_specs[0]
         class_descriptions = generate_object_specs(
             labels, first["model_id"],
@@ -740,7 +773,7 @@ def _cli() -> None:
                         help="COCO JSON (local mode only)")
     parser.add_argument("--model", default=DEFAULT_VLM)
     parser.add_argument("--judges", default=None,
-                        help="Comma-separated judge model ids for an ensemble "
+                        help="Two comma-separated judge model ids for an ensemble "
                              "(overrides --model). All share --backend/--base-url.")
     parser.add_argument("--labels", default=None,
                         help="Comma-separated category labels. The first judge "

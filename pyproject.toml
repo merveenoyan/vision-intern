@@ -3,7 +3,7 @@ name = "vision-agent"
 version = "0.1.0"
 description = "A toolkit for VLM-driven detection pipelines: label datasets, judge labels with a VLM-as-judge, and train detection models — designed to be driven by an orchestrating agent."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 
 # Light core: the label / judge / merge path. No torch — so a CPU-only merge or
@@ -25,7 +25,7 @@ dependencies = [
 train = [
     "torch>=2.5.0",
     "torchvision",
-    "transformers>=5.10.0",
+    "transformers>=5.21.0",
     "timm",
     "torchmetrics",
     "albumentations",

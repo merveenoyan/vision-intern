@@ -1,9 +1,9 @@
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = [
 #   "torch",
 #   "torchvision",
-#   "transformers",
+#   "transformers>=5.21.0",
 #   "accelerate",
 #   "einops",
 #   "pillow",
@@ -16,7 +16,7 @@
 # ///
 """HF Job — STAGE 2: score one judge over the labelled dataset (GPU, batched).
 
-Run once per judge (gemma-4-E4B-it and LFM2.5-VL-1.6B). These judges are small
+Run twice: Gemma + LFM3, or replace one with d1-Omni-2B. These judges are small
 and **not served by HF Inference Providers**, so they run **locally with the
 ``transformers`` backend on the job's GPU** — not through the router. Inference
 is **batched** (``--batch-size``, many images per ``generate`` call) so the GPU
@@ -32,10 +32,10 @@ bucket is the intended multi-read/write pattern.
       jobs/judge_one.py -- --model google/gemma-4-E4B-it \
       --out /data/run/verdicts_gemma.parquet --batch-size 8
 
-    # judge B (Liquid, 1.6B) — small, fits l4x1
+    # judge B (Liquid, 1.92B) — small, fits l4x1
     hf jobs uv run --flavor l4x1 --secrets HF_TOKEN --timeout 3h \
       -v hf://buckets/merve/vision-agent-runs:/data -e REPO_REF=multimodel-jobs \
-      jobs/judge_one.py -- --model LiquidAI/LFM2.5-VL-1.6B \
+      jobs/judge_one.py -- --model LiquidAI/LFM3-VL-2B \
       --out /data/run/verdicts_lfm.parquet --batch-size 16
 """
 
@@ -61,8 +61,10 @@ sys.path.insert(0, str(REPO_DIR))
 
 
 def main() -> None:
+    from tools.model_options import JUDGE_MODEL_OPTIONS
+
     p = argparse.ArgumentParser()
-    p.add_argument("--model", required=True, help="Judge model id (HF repo)")
+    p.add_argument("--model", required=True, help="Judge model id (HF repo). Options: " + ", ".join(JUDGE_MODEL_OPTIONS))
     p.add_argument("--dataset", default="merve/docvqa-media-labeled-moondream")
     p.add_argument("--split", default="test")
     p.add_argument("--detections-column", default="detections")

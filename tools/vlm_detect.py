@@ -28,6 +28,7 @@ from typing import Any
 
 from PIL import Image
 
+from .model_options import QWEN_LABEL_MODELS
 from .utils import load_image
 from .vlm_client import run_vlm
 
@@ -52,6 +53,10 @@ def parse_bboxes_from_response(text: str) -> list[dict[str, Any]]:
     malformed JSON.  Falls back to regex extraction when no parseable
     objects are found.
     """
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    elif "<think>" in text:
+        return []  # No final answer: do not label from reasoning examples.
     results: list[dict[str, Any]] = []
 
     pattern = r'\{[^{}]*"bbox_2d"\s*:\s*\[[\d\s.,\-]+\][^{}]*\}'
@@ -162,6 +167,16 @@ def vlm_detect(
         Each dict contains ``bbox`` ([x1,y1,x2,y2] in pixels),
         ``label`` (str), and ``sub_label`` (str).
     """
+    from .d1 import d1_detect, is_d1
+
+    if is_d1(model_id):
+        if backend != "transformers":
+            raise ValueError("d1 requires backend='transformers' and its System One API")
+        if prompt is not None:
+            raise ValueError("Use classes/class_descriptions for d1, or d1_decide for typed questions")
+        return d1_detect(image, classes, model_id=model_id,
+                         class_descriptions=class_descriptions)
+
     image = load_image(image)
     w, h = image.size
 
@@ -228,7 +243,8 @@ if __name__ == "__main__":
     parser.add_argument("image", help="Image path or URL")
     parser.add_argument("--prompt", default=None)
     parser.add_argument("--classes", default=None, help="Comma-separated classes")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=DEFAULT_MODEL,
+                        help="Model ID; Qwen labeller options: " + ", ".join(QWEN_LABEL_MODELS))
     parser.add_argument("--backend", default="transformers",
                         choices=["openai", "transformers"])
     parser.add_argument("--base-url", default=None,
